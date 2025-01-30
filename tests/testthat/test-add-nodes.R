@@ -48,4 +48,6 @@ test_that("add_nodes_to_graph2 maintains graph structure", {
     
     # Check that new edges have valid IDs
     expect_true(all(!is.na(g1$edge_id)))
+    
+    tmp <- dodgr::dodgr_distances(g1)
 })

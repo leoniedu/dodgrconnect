@@ -12,7 +12,7 @@ You can install the development version of dodgrconnect from GitHub with:
 
 ```r
 # install.packages("remotes")
-remotes::install_github("eleon/dodgrconnect")
+remotes::install_github("leoniedu/dodgrconnect")
 ```
 
 ## Usage
@@ -31,4 +31,4 @@ library(dodgrconnect)
 
 ## License
 
-MIT © Eduardo Leon
+MIT © Eduardo Leoni

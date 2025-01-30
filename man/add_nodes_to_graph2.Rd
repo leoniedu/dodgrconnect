@@ -58,6 +58,7 @@ time weightings, are inherited from the edges which are intersected, and may
 need to be manually modified after calling this function.
 }
 \examples{
+library(dodgr)
 graph <- weight_streetnet (hampi, wt_profile = "foot")
 dim (graph)
 

@@ -39,6 +39,7 @@ genhash <- function (len = 10) {
 #' points, `xy`.
 #' @family match
 #' @examples
+#' library(dodgr)
 #' graph <- weight_streetnet (hampi, wt_profile = "foot")
 #' dim (graph)
 #'
@@ -195,8 +196,8 @@ add_nodes_to_graph2 <- function (graph,
                     edge_i_new$d_weighted <- edge_i_new$d / way_wt
                     
                     # Apply additional weight calculations
-                    edge_i_new <- dodgr:::set_maxspeed(edge_i_new, wt_profile, wt_profile_file) %>%
-                        dodgr:::weight_by_num_lanes(wt_profile) %>%
+                    edge_i_new <- dodgr:::set_maxspeed(edge_i_new, wt_profile, wt_profile_file) |>
+                        dodgr:::weight_by_num_lanes(wt_profile) |>
                         dodgr:::calc_edge_time(wt_profile)
                 } else {
                     # Inherit weights from original edge

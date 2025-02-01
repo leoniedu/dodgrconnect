@@ -128,8 +128,8 @@ connect_components <- function(graph,
         new_edges$surface <- surface
         
         # Calculate weights using built-in functions
-        new_edges <- dodgr:::set_maxspeed(new_edges, wt_profile, wt_profile_file) %>%
-            dodgr:::weight_by_num_lanes(wt_profile) %>%
+        new_edges <- dodgr:::set_maxspeed(new_edges, wt_profile, wt_profile_file) |>
+            dodgr:::weight_by_num_lanes(wt_profile) |>
             dodgr:::calc_edge_time(wt_profile)
         
         # Add all new edges to graph

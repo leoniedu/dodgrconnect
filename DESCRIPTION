@@ -11,7 +11,7 @@ RoxygenNote: 7.3.2
 Imports: 
     checkmate (>= 2.2.0),
     cli (>= 3.6.0),
-    dodgr,
+    dodgr (>= 0.2.21),
     glue,
     stats,
     utils

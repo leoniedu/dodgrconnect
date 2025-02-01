@@ -1,3 +1,10 @@
+library(testthat)
+dodgr::dodgr_cache_off ()
+dodgr::clear_dodgr_cache ()
+profile_file <- here::here("tests/testthat/profile.json")
+dodgr::write_dodgr_wt_profile(profile_file)
+
+
 test_that("connect_components validates input", {
     graph <- dodgr::weight_streetnet(dodgr::hampi)
     

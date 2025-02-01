@@ -80,8 +80,9 @@ connect_components <- function(graph,
     # For each smaller component (2 up to max_comp)
     for (comp_id in 2:max_comp) {
         comp_verts <- vertices[vertices$original_cmp == comp_id, ]
+        ## FIX: following line, even if components did not connect, still 
+        ## trying to connect to them.
         main_verts <- vertices[vertices$original_cmp < comp_id, ]
-        
         # Find all possible connections within threshold
         dists <- geodist::geodist(
             data.frame(lon = comp_verts$x, lat = comp_verts$y),

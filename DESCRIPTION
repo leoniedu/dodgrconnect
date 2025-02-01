@@ -1,21 +1,20 @@
 Package: dodgrconnect
-Title: Enhanced Graph Component Connection for dodgr
+Title: Connect Components in Street Networks
 Version: 0.0.0.9000
 Authors@R: 
-    person("Eduardo", "Leon", , "eduardo.leon@example.com", role = c("aut", "cre"))
-Description: Extends the dodgr package with enhanced functionality for connecting
-    graph components. Provides improved methods for handling edge weights, speeds,
-    and surface types when connecting disconnected components in street networks.
+    person("Eduardo", "Leoni", , "e.leoni@gmail.com", role = c("aut", "cre"))
+Description: Functions to connect components in street networks.
 License: MIT + file LICENSE
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
 RoxygenNote: 7.3.2
 Imports: 
+    checkmate (>= 2.2.0),
+    cli (>= 3.6.0),
     dodgr,
-    dplyr,
-    geodist,
+    glue,
     stats,
     utils
-Suggests:
+Suggests: 
     testthat (>= 3.0.0)
 Config/testthat/edition: 3

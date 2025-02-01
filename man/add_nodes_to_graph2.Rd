@@ -2,8 +2,7 @@
 % Please edit documentation in R/add_nodes_to_graph2.R
 \name{add_nodes_to_graph2}
 \alias{add_nodes_to_graph2}
-\title{Insert new nodes into a graph, breaking edges at point of nearest
-intersection.}
+\title{Insert new nodes into a graph with custom edge weights}
 \usage{
 add_nodes_to_graph2(
   graph,
@@ -17,31 +16,39 @@ add_nodes_to_graph2(
 )
 }
 \arguments{
+\item{graph}{A \code{data.frame} or \code{dodgr_streetnet} containing the graph edges}
+
+\item{xy}{A \code{data.frame} or \code{matrix} of points to add. If a matrix, must have 2 columns
+for x and y coordinates. If a data.frame, must include 'x' and 'y' columns.}
+
 \item{dist_tol}{Minimum distance used to identify points lying directly on edges,
-than this distance, expressed in units of the distance column of \code{graph}.}
+expressed in units of the distance column of \code{graph}}
 
-\item{intersections_only}{If \code{FALSE}}
+\item{intersections_only}{If \code{FALSE} (default), adds edges to connect new points.
+If \code{TRUE}, only splits edges at intersection points.}
 
-\item{new_edge_type}{Optional highway type for new edges connecting points to the network. If NULL (default),
-new edges will use the same weighting factors as the original edge being split.}
+\item{new_edge_type}{Optional highway type for new edges connecting points to the network.
+If NULL (default), inherits type from parent edges.}
 
-\item{wt_profile}{Name of weighting profile to use when new_edge_type is specified. If NULL (default),
-new edges will use the same weighting factors as the original edge being split.}
+\item{wt_profile}{Name of weighting profile to use when new_edge_type is specified.
+Required if new_edge_type is specified. Common values: "foot", "bicycle", "motorcar".}
 
-\item{wt_profile_file}{Name of locally-stored, \code{.json}-formatted version of weighting profiles. If NULL (default),
-uses the default profiles.}
+\item{wt_profile_file}{Name of locally-stored, \code{.json}-formatted version of weighting
+profiles. If NULL (default), uses the default profiles.}
 
-\item{surface}{Surface type for new edges connecting points to the network. If NULL (default),
-new edges will use the same surface type as the original edge being split.}
+\item{surface}{Surface type for new edges. Required if new_edge_type is specified.
+Common values: "paved", "unpaved", "asphalt".}
 }
 \value{
 A modified version of \code{graph}, with additional edges formed by
 breaking previous edges at nearest perpendicular intersections with the
-points, \code{xy}.
+points, \code{xy}. When new_edge_type is specified, connecting edges use the
+specified weights and profiles.
 }
 \description{
-Note that this routine presumes graphs to be \code{dodgr_streetnet} object, with
-geographical coordinates.
+This function extends \code{dodgr::add_nodes_to_graph} by adding the ability to specify
+custom weights for new edges. While the original function inherits weights from
+parent edges, this version allows customization through weight profiles.
 }
 \details{
 This inserts new nodes by extending lines from each input point to the edge
@@ -57,20 +64,36 @@ In the former case, the properties of those new edges, such as distance and
 time weightings, are inherited from the edges which are intersected, and may
 need to be manually modified after calling this function.
 }
+\section{Key Differences from dodgr}{
+:add_nodes_to_graph:
+While the original function inherits all weights from parent edges, this version:
+\itemize{
+\item Allows specifying custom highway types for new connecting edges
+\item Supports weight profile calculations for the new edges
+\item Enables custom surface types
+\item Falls back to inherited weights if no custom weights are specified
+}
+}
+
 \examples{
 library(dodgr)
-graph <- weight_streetnet (hampi, wt_profile = "foot")
-dim (graph)
+graph <- weight_streetnet(hampi, wt_profile = "foot")
+dim(graph)
 
-verts <- dodgr_vertices (graph)
-set.seed (2)
+verts <- dodgr_vertices(graph)
+set.seed(2)
 npts <- 10
-xy <- data.frame (
-    x = min (verts$x) + runif (npts) * diff (range (verts$x)),
-    y = min (verts$y) + runif (npts) * diff (range (verts$y))
+xy <- data.frame(
+    x = min(verts$x) + runif(npts) * diff(range(verts$x)),
+    y = min(verts$y) + runif(npts) * diff(range(verts$y))
 )
 
-graph <- add_nodes_to_graph2 (graph, xy)
-dim (graph) # more edges than original
+# Add points with inherited weights (like dodgr::add_nodes_to_graph)
+graph1 <- add_nodes_to_graph2(graph, xy)
+
+# Add points with custom footpath weights
+graph2 <- add_nodes_to_graph2(graph, xy,
+                             new_edge_type = "footway",
+                             wt_profile = "foot",
+                             surface = "paved")
 }
-\concept{match}

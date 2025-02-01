@@ -22,6 +22,7 @@ genhash <- function (len = 10) {
 #' In the former case, the properties of those new edges, such as distance and
 #' time weightings, are inherited from the edges which are intersected, and may
 #' need to be manually modified after calling this function.
+#'
 #' @section Key Differences from dodgr::add_nodes_to_graph:
 #' While the original function inherits all weights from parent edges, this version:
 #' - Allows specifying custom highway types for new connecting edges
@@ -30,7 +31,8 @@ genhash <- function (len = 10) {
 #' - Falls back to inherited weights if no custom weights are specified
 #'
 #' @param graph A `data.frame` or `dodgr_streetnet` containing the graph edges
-#' @param xy A `data.frame` of points to add, must include 'x' and 'y' columns
+#' @param xy A `data.frame` or `matrix` of points to add. If a matrix, must have 2 columns
+#'        for x and y coordinates. If a data.frame, must include 'x' and 'y' columns.
 #' @param dist_tol Minimum distance used to identify points lying directly on edges,
 #'        expressed in units of the distance column of `graph`
 #' @param intersections_only If `FALSE` (default), adds edges to connect new points.
@@ -38,10 +40,11 @@ genhash <- function (len = 10) {
 #' @param new_edge_type Optional highway type for new edges connecting points to the network.
 #'        If NULL (default), inherits type from parent edges.
 #' @param wt_profile Name of weighting profile to use when new_edge_type is specified.
-#'        Required if new_edge_type is specified.
+#'        Required if new_edge_type is specified. Common values: "foot", "bicycle", "motorcar".
 #' @param wt_profile_file Name of locally-stored, `.json`-formatted version of weighting
 #'        profiles. If NULL (default), uses the default profiles.
 #' @param surface Surface type for new edges. Required if new_edge_type is specified.
+#'        Common values: "paved", "unpaved", "asphalt".
 #'
 #' @return A modified version of `graph`, with additional edges formed by
 #'         breaking previous edges at nearest perpendicular intersections with the
@@ -79,11 +82,49 @@ add_nodes_to_graph2 <- function (graph,
                                  wt_profile_file = NULL,
                                  surface = NULL) {
     
+    # Input validation
+    checkmate::assert_data_frame(graph)
+    checkmate::assert(
+        checkmate::check_data_frame(xy),
+        checkmate::check_matrix(xy, ncols = 2),
+        combine = "or"
+    )
+    if (is.matrix(xy)) {
+        xy <- as.data.frame(xy)
+        names(xy) <- c("x", "y")
+    }
+    checkmate::assert_names(names(xy), must.include = c("x", "y"))
+    checkmate::assert_names(names(graph), must.include = c(
+        "edge_id", "from_id", "to_id", "d", "d_weighted", 
+        "time", "time_weighted", "highway"
+    ))
+    checkmate::assert_number(dist_tol, lower = 0)
+    checkmate::assert_flag(intersections_only)
+    checkmate::assert_character(new_edge_type, null.ok = TRUE, len = 1)
+    checkmate::assert_character(wt_profile, null.ok = TRUE, len = 1)
+    checkmate::assert_character(wt_profile_file, null.ok = TRUE, len = 1)
+    checkmate::assert_character(surface, null.ok = TRUE, len = 1)
+    
+    # Validate weight profile parameters
     if (!is.null(new_edge_type)) {
-        if (is.null(wt_profile) || is.null(surface)) {
-            stop("When new_edge_type is specified, wt_profile and surface must be provided")
+        if (is.null(wt_profile)) {
+            stop("'wt_profile' must be specified when 'new_edge_type' is provided")
+        }
+        if (is.null(surface)) {
+            stop("'surface' must be specified when 'new_edge_type' is provided")
+        }
+        
+        # Validate weight profile exists and contains the edge type
+        wp <- tryCatch(
+            dodgr:::get_profile(wt_profile, wt_profile_file),
+            error = function(e) stop("Error loading weight profile: ", e$message)
+        )
+        if (!new_edge_type %in% wp$way) {
+            stop(sprintf("'%s' is not a valid edge type in weight profile '%s'",
+                       new_edge_type, wt_profile))
         }
     }
+    
     # Add original_edge_id if not present
     if (!"original_edge_id" %in% names(graph)) {
         graph$original_edge_id <- graph$edge_id

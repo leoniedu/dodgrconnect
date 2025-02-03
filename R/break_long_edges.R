@@ -4,7 +4,7 @@
 #' exceed a specified maximum distance.
 #' 
 #' @param graph A data frame or dodgr_streetnet object with columns 'from_id', 'to_id', 'd', and 'component'
-#' @param max_d Numeric. Maximum allowed edge distance. If NULL (default), uses the mean
+#' @param max_d Numeric. Maximum allowed edge length/distance. If NULL (default), uses the mean(distance)+sd(distance)
 #'   distance of all edges in the graph
 #' @param verbose Logical. If TRUE, displays progress information. Default is TRUE.
 #' 
@@ -30,7 +30,7 @@
 #' summary(net$d)
 #' hist(net$d, breaks = 50, main = "Original edge length distribution")
 #' 
-#' # Break long edges using mean distance as threshold
+#' # Break long edges using default threshold
 #' net_modified <- break_long_edges(net)  # Default verbose = TRUE
 #' 
 #' # Run quietly
@@ -70,7 +70,7 @@ break_long_edges <- function(graph, max_d = NULL, verbose = TRUE) {
   
   # Initialize max_d if NULL
   if (is.null(max_d)) {
-    max_d <- mean(graph$d)
+    max_d <- mean(graph$d)+sd(graph$d)
   }
   
   # Find initial edges exceeding max_d

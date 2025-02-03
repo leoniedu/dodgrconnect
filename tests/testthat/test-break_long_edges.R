@@ -10,8 +10,8 @@ test_that("break_long_edges works with default max_d", {
   expect_s3_class(result, "data.frame")
   
   # Check that no edges are longer than the mean distance
-  mean_d <- mean(test_graph$d)
-  expect_true(all(result$d <= mean_d))
+  m_d <- mean(test_graph$d)+sd(test_graph$d)
+  expect_true(all(result$d <= m_d))
   
   # Check that we have more edges than the original graph
   expect_gt(nrow(result), nrow(test_graph))

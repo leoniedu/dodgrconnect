@@ -9,7 +9,7 @@ break_long_edges(graph, max_d = NULL, verbose = TRUE)
 \arguments{
 \item{graph}{A data frame or dodgr_streetnet object with columns 'from_id', 'to_id', 'd', and 'component'}
 
-\item{max_d}{Numeric. Maximum allowed edge distance. If NULL (default), uses the mean
+\item{max_d}{Numeric. Maximum allowed edge length/distance. If NULL (default), uses the mean(distance)+sd(distance)
 distance of all edges in the graph}
 
 \item{verbose}{Logical. If TRUE, displays progress information. Default is TRUE.}
@@ -42,7 +42,7 @@ net <- dodgr::weight_streetnet(hampi)
 summary(net$d)
 hist(net$d, breaks = 50, main = "Original edge length distribution")
 
-# Break long edges using mean distance as threshold
+# Break long edges using default threshold
 net_modified <- break_long_edges(net)  # Default verbose = TRUE
 
 # Run quietly

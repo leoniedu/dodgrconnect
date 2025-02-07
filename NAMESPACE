@@ -2,7 +2,9 @@
 
 export(add_nodes_to_graph2)
 export(break_long_edges)
+export(component_distances)
 export(connect_components)
+export(connect_components2)
 importFrom(checkmate,assert_data_frame)
 importFrom(checkmate,assert_flag)
 importFrom(checkmate,assert_number)

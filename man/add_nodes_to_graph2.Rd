@@ -19,7 +19,8 @@ add_nodes_to_graph2(
 \item{graph}{A \code{data.frame} or \code{dodgr_streetnet} containing the graph edges}
 
 \item{xy}{A \code{data.frame} or \code{matrix} of points to add. If a matrix, must have 2 columns
-for x and y coordinates. If a data.frame, must include 'x' and 'y' columns.}
+for x and y coordinates. If a data.frame, must include 'x' and 'y' columns.
+Optionally can include 'id' column to specify vertex IDs.}
 
 \item{dist_tol}{Minimum distance used to identify points lying directly on edges,
 expressed in units of the distance column of \code{graph}}
@@ -72,6 +73,7 @@ While the original function inherits all weights from parent edges, this version
 \item Supports weight profile calculations for the new edges
 \item Enables custom surface types
 \item Falls back to inherited weights if no custom weights are specified
+\item Optionally accepts vertex IDs in the xy data frame
 }
 }
 
@@ -85,7 +87,8 @@ set.seed(2)
 npts <- 10
 xy <- data.frame(
     x = min(verts$x) + runif(npts) * diff(range(verts$x)),
-    y = min(verts$y) + runif(npts) * diff(range(verts$y))
+    y = min(verts$y) + runif(npts) * diff(range(verts$y)),
+    id = paste0("new_", 1:npts)  # Optional vertex IDs
 )
 
 # Add points with inherited weights (like dodgr::add_nodes_to_graph)

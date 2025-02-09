@@ -68,6 +68,12 @@
 #'                                   surface = "paved")
 #' }
 #' @export
+#' @importFrom cli cli_inform cli_progress_step
+#' @importFrom glue glue
+#' @importFrom checkmate assert_data_frame assert_subset assert_numeric assert_number test_class assert_flag
+#' @importFrom dodgr dodgr_cache_off dodgr_cache_on
+#' @importFrom dplyr bind_rows mutate %>%
+#' @import dplyr
 connect_components3 <- function(graph, 
                              distance_threshold = 20,
                              connection_type,
@@ -114,7 +120,9 @@ connect_components3 <- function(graph,
     
     # Get unique components
     components <- unique(vertices$original_cmp)
-    stopifnot(all(components_to_join)%in%components)
+    if (!all(components_to_join %in% components)) {
+        stop("Some components_to_join are not present in the graph")
+    }
     if (length(components) < 2) {
         stop("Nothing to connect")
     }
@@ -144,20 +152,41 @@ connect_components3 <- function(graph,
         vert1_sf <- sf::st_as_sf(vert1, coords = c("x", "y"), crs = 4326, remove = FALSE)
         vert2_sf <- sf::st_as_sf(vert2, coords = c("x", "y"), crs = 4326, remove = FALSE)
         
-        # Calculate all pairwise distances
-        dists <- sf::st_distance(vert1_sf, vert2_sf)
-        
         # Convert threshold to units object
         dist_threshold <- units::set_units(distance_threshold, "m")
         
-        # Find all pairs within threshold
-        close_pairs <- which(dists <= dist_threshold, arr.ind = TRUE)
+        # Determine which set to iterate over (the smaller one)
+        if (nrow(vert1_sf) <= nrow(vert2_sf)) {
+            base_sf <- vert1_sf
+            target_sf <- vert2_sf
+            swap_indices <- FALSE
+        } else {
+            base_sf <- vert2_sf
+            target_sf <- vert1_sf
+            swap_indices <- TRUE
+        }
         
-        # Store minimum distance if components can't be connected
-        # min_dist <- min(dists)
-        # if (nrow(close_pairs) == 0) {
-        #     min_distances <- c(min_distances, units::drop_units(min_dist))
-        # }
+        # Initialize close_pairs
+        close_pairs <- matrix(ncol = 2, nrow = 0)
+        
+        # Process one vertex at a time
+        for (i in seq_len(nrow(base_sf))) {
+            # Calculate distances from this vertex to all vertices in target_sf
+            dists <- sf::st_distance(base_sf[i,], target_sf)
+            # Find indices where distance is below threshold
+            close_idx <- which(dists <= dist_threshold)
+            if (length(close_idx) > 0) {
+                # Create pairs matrix for this vertex
+                new_pairs <- cbind(rep(i, length(close_idx)), close_idx)
+                # Add to existing pairs
+                close_pairs <- rbind(close_pairs, new_pairs)
+            }
+        }
+        
+        # Swap indices back if we swapped the vertex sets
+        if (swap_indices) {
+            close_pairs <- close_pairs[, c(2,1), drop = FALSE]
+        }
         
         if (nrow(close_pairs) > 0) {
             # Get profile weight for connection_type

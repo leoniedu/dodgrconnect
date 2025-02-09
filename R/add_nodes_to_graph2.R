@@ -119,7 +119,7 @@ add_nodes_to_graph2 <- function (graph,
   # Process each edge in the graph
   processed_edges <- character(0)  # Keep track of processed edges
   connected_points <- list()  # Keep track of points we've already connected
-  result <- graph[0,]  # Start with empty result
+  result <- graph[0,]  # Start with empty result with same structure as input
   edges_to_keep <- character(0)  # Keep track of edges to keep
   
   # First pass: process all edges except edge_id "2"
@@ -465,9 +465,17 @@ add_nodes_to_graph2 <- function (graph,
     result[result$edge_id %in% edges_to_keep,]      # Keep only original edges that were marked to keep
   )
   
-  # Return the modified graph
-  message("Result columns: ", paste(names(result), collapse=", "))
-  message("Distance column class: ", class(result$d))
+  # Return result with same columns as input graph
+  required_cols <- names(graph)
+  
+  missing_cols <- setdiff(required_cols, names(result))
+  if (length(missing_cols) > 0) {
+    for (col in missing_cols) {
+      result[[col]] <- NA
+    }
+  }
+  
+  result <- result[, intersect(names(graph), names(result))]
   return(result)
 }
 

@@ -3,83 +3,29 @@
 #' This function connects disconnected components of a graph by adding edges between
 #' vertices that are within a specified distance threshold. For graphs with more than
 #' two components, it uses a minimum spanning tree (MST) approach to determine the
-#' sequence of components to connect, starting from component 1 (assumed to be the
-#' largest component). For each pair of components in the MST sequence, it adds edges
-#' between all vertex pairs that are within the threshold distance.
+#' optimal set of connections between components.
 #'
-#' @param graph A data frame or dodgr_streetnet object with columns 'from_id', 'to_id',
-#'        and 'component'. Vertex coordinates will be obtained from the graph using
-#'        dodgr_vertices(), which expects coordinates in the graph's edge columns
-#'        (from_lon, from_lat, to_lon, to_lat).
-#' @param distance_threshold Distance threshold in meters. Vertices from different
-#'        components that are closer than this threshold will be connected. Components
-#'        that are farther apart than this threshold will remain disconnected, and a
-#'        warning will be issued with the minimum distances between components.
-#' @param distance_matrix Optional pre-computed distance matrix between components.
-#'        If NULL (default), it will be calculated using component_distances().
-#'        The matrix should have distances greater than distance_threshold set to NA.
-#' @param connection_type Type of connection to create between components (e.g.,
-#'        'footway', 'residential'). Must be a valid highway type in the weight profile.
-#' @param wt_profile Weight profile to use for the new edges (e.g., 'foot', 'bicycle').
-#' @param wt_profile_file Optional path to a custom weight profile JSON file.
-#' @param surface Surface type for the new edges (e.g., 'paved', 'unpaved').
+#' The function uses spatial indexing via sf::st_is_within_distance for efficient
+#' distance calculations between vertices.
 #'
-#' @return A modified version of the input graph with new edges connecting components
-#'         that are within distance_threshold of each other. The returned graph will
-#'         have the same class and structure as the input graph. Components that could
-#'         not be connected (due to being farther apart than distance_threshold) will
-#'         remain disconnected.
-#'
-#' @details
-#' The function follows these steps:
-#' 1. Gets vertex coordinates from the graph using dodgr_vertices()
-#' 2. Calculates (or uses provided) distances between all components
-#' 3. For graphs with more than 2 components:
-#'    - Creates a minimum spanning tree (MST) starting from component 1
-#'    - Uses the MST to determine the sequence of components to connect
-#' 4. For each component pair in the sequence:
-#'    - Finds all vertex pairs within distance_threshold
-#'    - Creates bidirectional edges between these vertices
-#'    - Sets appropriate weights based on the weight profile
-#' 5. Updates component IDs in the final graph
-#'
-#' The MST approach ensures that components are connected in a way that minimizes
-#' the total distance of connections while maintaining connectivity.
-#'
-#' @examples
-#' \dontrun{
-#' library(dodgr)
-#' net <- weight_streetnet(hampi)
-#' 
-#' # Connect components that are within 100 meters of each other
-#' connected_net <- connect_components(net, 
-#'                                   distance_threshold = 100,
-#'                                   connection_type = "footway",
-#'                                   wt_profile = "foot",
-#'                                   surface = "paved")
-#'                                   
-#' # Use pre-computed distance matrix
-#' dist_mat <- component_distances(net, distance_threshold = 100)
-#' connected_net <- connect_components(net,
-#'                                   distance_threshold = 100,
-#'                                   distance_matrix = dist_mat,
-#'                                   connection_type = "footway",
-#'                                   wt_profile = "foot",
-#'                                   surface = "paved")
-#' }
-#' @export
-#' @importFrom cli cli_inform cli_progress_step
-#' @importFrom glue glue
-#' @importFrom checkmate assert_data_frame assert_subset assert_numeric assert_number test_class assert_flag
-#' @importFrom dodgr dodgr_cache_off dodgr_cache_on
-#' @importFrom dplyr bind_rows mutate %>%
-#' @import dplyr
+#' @param graph A data frame representing a graph with at least x, y coordinates
+#' @param distance_threshold Distance threshold in meters for connecting components
+#' @param connection_type Type of way to use for connecting components (e.g., "path", "footway")
+#' @param wt_profile Weight profile to use for the new edges
+#' @param wt_profile_file Optional path to a weight profile file
+#' @param surface Surface type for the new edges
+#' @param components_to_join Components to connect
+#' @return A modified graph with components connected
+#' @importFrom sf st_as_sf st_is_within_distance
+#' @importFrom units set_units
+#' @noRd
 connect_components3 <- function(graph, 
                              distance_threshold = 20,
                              connection_type,
                              wt_profile,
                              wt_profile_file = NULL,
-                             surface, components_to_join) {
+                             surface = "paved",
+                             components_to_join) {
     # Store original graph class
     graph_class <- class(graph)
     
@@ -155,39 +101,28 @@ connect_components3 <- function(graph,
         # Convert threshold to units object
         dist_threshold <- units::set_units(distance_threshold, "m")
         
-        # Determine which set to iterate over (the smaller one)
-        if (nrow(vert1_sf) <= nrow(vert2_sf)) {
-            base_sf <- vert1_sf
-            target_sf <- vert2_sf
-            swap_indices <- FALSE
+        # Find close pairs using spatial indexing
+        pairs <- sf::st_is_within_distance(vert1_sf, vert2_sf, 
+                                         dist = dist_threshold, 
+                                         sparse = TRUE)
+        # Convert sparse format to matrix of pairs
+        n_pairs <- sum(lengths(pairs))
+        close_pairs <- if (n_pairs == 0) {
+            matrix(ncol = 2, nrow = 0)
         } else {
-            base_sf <- vert2_sf
-            target_sf <- vert1_sf
-            swap_indices <- TRUE
-        }
-        
-        # Initialize close_pairs
-        close_pairs <- matrix(ncol = 2, nrow = 0)
-        
-        # Process one vertex at a time
-        for (i in seq_len(nrow(base_sf))) {
-            # Calculate distances from this vertex to all vertices in target_sf
-            dists <- sf::st_distance(base_sf[i,], target_sf)
-            # Find indices where distance is below threshold
-            close_idx <- which(dists <= dist_threshold)
-            if (length(close_idx) > 0) {
-                # Create pairs matrix for this vertex
-                new_pairs <- cbind(rep(i, length(close_idx)), close_idx)
-                # Add to existing pairs
-                close_pairs <- rbind(close_pairs, new_pairs)
+            result <- matrix(ncol = 2, nrow = n_pairs)
+            idx <- 1
+            for (i in seq_along(pairs)) {
+                matches <- pairs[[i]]
+                if (length(matches) > 0) {
+                    n <- length(matches)
+                    result[idx:(idx + n - 1), ] <- cbind(rep(i, n), matches)
+                    idx <- idx + n
+                }
             }
+            result
         }
-        
-        # Swap indices back if we swapped the vertex sets
-        if (swap_indices) {
-            close_pairs <- close_pairs[, c(2,1), drop = FALSE]
-        }
-        
+        browser()
         if (nrow(close_pairs) > 0) {
             # Get profile weight for connection_type
             wp <- dodgr:::get_profile(wt_profile, wt_profile_file)
@@ -199,6 +134,12 @@ connect_components3 <- function(graph,
             
             # Create edges for all close pairs
             connected_comps <- c(connected_comps, comp2)
+            
+            # Add new nodes and connecting edges to graph1
+            cat("\nBefore add_nodes_to_graph2:")
+            cat("\nNumber of edges in graph1:", nrow(graph1))
+            cat("\nNumber of edges in graph2:", nrow(graph2))
+            
             graph1 <- add_nodes_to_graph2(graph1, vert2_sf[unique(close_pairs[,2]),] , intersections_only = FALSE,
                                           new_edge_type = connection_type,
                                           wt_profile = wt_profile,

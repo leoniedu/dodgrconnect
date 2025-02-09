@@ -156,9 +156,6 @@ add_nodes_to_graph2 <- function (graph,
     edge_vector <- c(to_lon - from_lon, to_lat - from_lat)
     edge_length <- sqrt(sum(edge_vector^2))
 
-    cat(sprintf("Edge: (%g,%g) to (%g,%g)\n", from_lon, from_lat, to_lon, to_lat))
-    cat(sprintf("Processing %d points:\n", nrow(xy)))
-
     # Process each point
     points_on_edge <- list()
     points_inside <- list()

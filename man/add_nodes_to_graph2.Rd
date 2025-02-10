@@ -12,33 +12,35 @@ add_nodes_to_graph2(
   new_edge_type = NULL,
   wt_profile = NULL,
   wt_profile_file = NULL,
-  surface = NULL
+  surface = NULL,
+  max_length = NULL,
+  tolerance = 0.001
 )
 }
 \arguments{
 \item{graph}{A \code{data.frame} or \code{dodgr_streetnet} containing the graph edges}
 
 \item{xy}{A \code{data.frame} or \code{matrix} of points to add. If a matrix, must have 2 columns
-for x and y coordinates. If a data.frame, must include 'x' and 'y' columns.
+for lon and lat coordinates. If a data.frame, must include 'lon' and 'lat' columns.
 Optionally can include 'id' column to specify vertex IDs.}
 
 \item{dist_tol}{Minimum distance used to identify points lying directly on edges,
 expressed in units of the distance column of \code{graph}}
 
-\item{intersections_only}{If \code{FALSE} (default), adds edges to connect new points.
-If \code{TRUE}, only splits edges at intersection points.}
+\item{intersections_only}{If TRUE, only add nodes at intersections between
+edges, otherwise add all nodes}
 
-\item{new_edge_type}{Optional highway type for new edges connecting points to the network.
-If NULL (default), inherits type from parent edges.}
+\item{new_edge_type}{Type of new edges to be added}
 
-\item{wt_profile}{Name of weighting profile to use when new_edge_type is specified.
-Required if new_edge_type is specified. Common values: "foot", "bicycle", "motorcar".}
+\item{wt_profile}{Name of weight profile to use}
 
-\item{wt_profile_file}{Name of locally-stored, \code{.json}-formatted version of weighting
-profiles. If NULL (default), uses the default profiles.}
+\item{wt_profile_file}{Custom weight profile file}
 
-\item{surface}{Surface type for new edges. Required if new_edge_type is specified.
-Common values: "paved", "unpaved", "asphalt".}
+\item{surface}{Surface type for new edges}
+
+\item{max_length}{Maximum length of new edges}
+
+\item{tolerance}{Tolerance for distance check (default: 1e-3)}
 }
 \value{
 A modified version of \code{graph}, with additional edges formed by
@@ -86,8 +88,8 @@ verts <- dodgr_vertices(graph)
 set.seed(2)
 npts <- 10
 xy <- data.frame(
-    x = min(verts$x) + runif(npts) * diff(range(verts$x)),
-    y = min(verts$y) + runif(npts) * diff(range(verts$y)),
+    lon = min(verts$lon) + runif(npts) * diff(range(verts$lon)),
+    lat = min(verts$lat) + runif(npts) * diff(range(verts$lat)),
     id = paste0("new_", 1:npts)  # Optional vertex IDs
 )
 

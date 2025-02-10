@@ -1,33 +1,58 @@
 #' Connect Graph Components (Simplified Version)
 #'
-#' This function connects disconnected components of a graph by adding edges between
-#' vertices that are within a specified distance threshold. It directly connects vertices
-#' between components without using a minimum spanning tree approach.
+#' This function connects two components of a graph by adding edges between
+#' vertices that are within a specified distance threshold. It identifies the
+#' closest vertices between components and creates bidirectional edges to connect them.
 #'
-#' The function uses spatial indexing via sf::st_is_within_distance for efficient
-#' distance calculations between vertices.
+#' The function uses spatial indexing and sf package for efficient distance calculations
+#' between vertices. New edges inherit properties from the weight profile specified.
 #'
-#' @param graph A data frame representing a graph with at least x, y coordinates
-#' @param distance_threshold Distance threshold in meters for connecting components
+#' @param graph A data frame or dodgr_streetnet object containing the graph
+#' @param distance_threshold Maximum distance in meters to consider for connecting vertices
 #' @param connection_type Type of way to use for connecting components (e.g., "path", "footway")
-#' @param wt_profile Weight profile to use for the new edges
-#' @param wt_profile_file Optional path to a weight profile file
-#' @param surface Surface type for the new edges
-#' @param components_to_join Components to connect
-#' @return A modified graph with components connected
+#' @param wt_profile Weight profile to use for calculating edge weights and times
+#' @param wt_profile_file Optional path to a custom weight profile file
+#' @param components_to_join Integer vector of length 2 specifying the two component IDs to connect
+#'
+#' @return A modified graph with the specified components connected. If components are
+#'         successfully connected, their component IDs are updated to match the first component.
+#'         If connection is not possible within the distance threshold, the graph remains unchanged.
+#'
+#' @details
+#' The function performs the following steps:
+#' 1. Validates inputs and checks if the connection_type exists in the weight profile
+#' 2. For each vertex in the second component, finds the closest vertex in the first component
+#' 3. If any pair of vertices are within distance_threshold, creates bidirectional edges
+#' 4. New edges are created with proper weights and times using dodgr's internal functions
+#' 5. Updates component IDs to reflect the new connection
+#'
+#' @examples
+#' \dontrun{
+#' library(dodgr)
+#' # Load a street network
+#' net <- weight_streetnet(hampi)
+#' 
+#' # Connect components 1 and 2 with footway edges
+#' net_connected <- connect_components_simple(
+#'   graph = net,
+#'   distance_threshold = 50,  # 50 meters
+#'   connection_type = "footway",
+#'   wt_profile = "foot",
+#'   components_to_join = c(1, 2)
+#' )
+#' }
+#'
 #' @importFrom sf st_as_sf st_is_within_distance
-#' @importFrom units set_units
-#' @noRd
+#' @export
 connect_components_simple <- function(graph, 
                                     distance_threshold = 20,
                                     connection_type,
                                     wt_profile,
                                     wt_profile_file = NULL,
-                                    surface = "paved",
                                     components_to_join) {
     # Store original graph class
     graph_class <- class(graph)
-    checkmate::check_integerish(components_to_join, lower=1, len=2)
+    
     ## Store original cache status
     cache_status <- dodgr:::is_dodgr_cache_on()
     on.exit({
@@ -43,9 +68,10 @@ connect_components_simple <- function(graph,
     dodgr::clear_dodgr_cache()
     
     # Input validation
-    if (missing(connection_type) || missing(wt_profile) || missing(surface)) {
-        stop("connection_type, wt_profile, and surface must be specified")
+    if (missing(connection_type) || missing(wt_profile)) {
+        stop("connection_type, and wt_profile must be specified")
     }
+    checkmate::assert_integerish(components_to_join, lower=1, len=2)
 
     # Verify connection_type has valid speed in profile
     wp <- dodgr:::get_profile(wt_profile, wt_profile_file)
@@ -85,12 +111,11 @@ connect_components_simple <- function(graph,
     # Create empty list to store new edges
     new_edges <- list()
 
-    cmp_joins <- data.frame(from=0, to=0)[0,]
     # For each pair of components
     #for (i in 1:(length(components_to_join)-1)) {
     for (i in 1) {
         comp1 <- components_to_join[i]
-        
+        cmp_joined <- comp1
         for (j in (i+1):length(components_to_join)) {
             comp2 <- components_to_join[j]
             cli::cli_inform("Trying to join {comp1} to {comp2}")
@@ -116,7 +141,7 @@ connect_components_simple <- function(graph,
             p2 <- sf::st_as_sf(vert2[1:length(matches),], coords = c("x", "y"), crs=4326)
             distances <- as.numeric(sf::st_distance(p1, p2, by_element = TRUE))
             if (any(distances<=distance_threshold)) {
-                cmp_joins <- rbind(cmp_joins, data.frame(from=comp1, to=comp2))
+                cmp_joined <- c(cmp_joined, comp2)
                 cli::cli_inform("Joining {comp1} to {comp2}")
             } else {
                 cli::cli_inform("Not possible to join {comp1} to {comp2}")
@@ -135,6 +160,7 @@ connect_components_simple <- function(graph,
                             to_lon = vert2$x[k],                  # Index into vert2
                             to_lat = vert2$y[k],                  # Index into vert2
                             d = d,
+                            d_weighted = d / way_wt, 
                             highway = connection_type,
                             edge_id = paste0("connector_", comp1, "_", comp2, "_", matches[k], "_", k),
                             component = comp1,
@@ -178,7 +204,7 @@ connect_components_simple <- function(graph,
     new_edges_df <- do.call(rbind, new_edges)
     # Add new edges to graph
     result <- bind_rows(graph, new_edges_df)
+    result$component[result$component%in%cmp_joined] <- cmp_joined[1]
     class(result) <- graph_class
-    attr(result, "joins") <- cmp_joins
     return(result)
 }

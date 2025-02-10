@@ -37,6 +37,8 @@
 #' @param wt_profile Name of weight profile to use
 #' @param wt_profile_file Custom weight profile file
 #' @param surface Surface type for new edges
+#' @param max_length Maximum length of new edges
+#' @param tolerance Tolerance for distance check (default: 1e-3)
 #' @return A modified version of `graph`, with additional edges formed by
 #'         breaking previous edges at nearest perpendicular intersections with the
 #'         points, `xy`. When new_edge_type is specified, connecting edges use the
@@ -72,7 +74,19 @@ add_nodes_to_graph2 <- function (graph,
                                  new_edge_type = NULL,
                                  wt_profile = NULL,
                                  wt_profile_file = NULL,
-                                 surface = NULL) {
+                                 surface = NULL,
+                                 max_length = NULL,
+                                 tolerance = 1e-3) {
+  
+  # Validate tolerance
+  if (!is.numeric(tolerance) || tolerance < 0) {
+    stop("Tolerance must be a non-negative numeric value")
+  }
+  
+  # Convert max_length to units object if provided
+  if (!is.null(max_length)) {
+    max_length <- units::set_units(max_length, "m")
+  }
   
   # Get vertex IDs
   has_vertex_ids <- "from_id" %in% names(graph)
@@ -92,380 +106,152 @@ add_nodes_to_graph2 <- function (graph,
   }
   message("XY columns: ", paste(colnames(xy), collapse=", "))
   
-  # Generate new vertex IDs for the points
-  new_vertex_ids <- sapply(1:nrow(xy), function(i) {
-    paste0(sample(c(letters, LETTERS, 0:9), 10, replace=TRUE), collapse="")
-  })
-  
-  # Initialize result with empty dataframe
-  result <- data.frame(
-    geom_num = numeric(0),
-    edge_id = character(0),
-    from_id = character(0),
-    from_lon = numeric(0),
-    from_lat = numeric(0),
-    to_id = character(0),
-    to_lon = numeric(0),
-    to_lat = numeric(0),
-    d = numeric(0),
-    d_weighted = numeric(0),
-    highway = character(0),
-    way_id = numeric(0),
-    component = numeric(0),
-    time = numeric(0),
-    time_weighted = numeric(0)
-  )
-
-  # Process each edge in the graph
-  processed_edges <- character(0)  # Keep track of processed edges
-  connected_points <- list()  # Keep track of points we've already connected
-  result <- graph[0,]  # Start with empty result with same structure as input
-  edges_to_keep <- character(0)  # Keep track of edges to keep
-  
-  # First pass: process all edges except edge_id "2"
-  for (i in seq_len(nrow(graph))) {
-    edge <- graph[i,]
-    
-    # Skip edge_id "2" for now
-    if (edge$edge_id == "2") {
-      next
-    }
-    
-    # Skip if we've already processed this edge in the opposite direction
-    # Check for both original edge ID and its reverse
-    edge_id <- as.character(edge$edge_id)
-    rev_edge_id <- if (endsWith(edge_id, "_rev")) {
-      sub("_rev$", "", edge_id)
-    } else {
-      paste0(edge_id, "_rev")
-    }
-    
-    if (edge_id %in% processed_edges || rev_edge_id %in% processed_edges) {
-      next
-    }
-    processed_edges <- c(processed_edges, edge_id, rev_edge_id)
-    
-    from_id <- edge$from_id
-    to_id <- edge$to_id
-    from_lon <- edge$from_lon
-    from_lat <- edge$from_lat
-    to_lon <- edge$to_lon
-    to_lat <- edge$to_lat
-
-    # Create vectors for edge
-    edge_vector <- c(to_lon - from_lon, to_lat - from_lat)
-    edge_length <- sqrt(sum(edge_vector^2))
-
-    # Process each point
-    points_on_edge <- list()
-    points_inside <- list()
-    points_outside <- list()
-
-    for (j in seq_len(nrow(xy))) {
-      point_x <- xy$x[j]
-      point_y <- xy$y[j]
-      point_key <- paste0(point_x, "_", point_y)
-      
-      # Skip if we've already connected this point
-      if (point_key %in% names(connected_points)) {
-        next
-      }
-
-      # Vector from edge start to point
-      point_vector <- c(point_x - from_lon, point_y - from_lat)
-      
-      # Project point onto edge
-      t <- sum(point_vector * edge_vector) / sum(edge_vector^2)
-      
-      # Calculate projected point
-      proj_x <- from_lon + t * edge_vector[1]
-      proj_y <- from_lat + t * edge_vector[2]
-      
-      # Calculate perpendicular distance using geodist
-      point_df <- data.frame(
-        x = c(point_x, proj_x),
-        y = c(point_y, proj_y)
-      )
-      perp_distance <- as.numeric(geodist::geodist(point_df, measure = "geodesic")[1,2])
-      
-      cat(sprintf("Point %d: (%g,%g)\n", j, point_x, point_y))
-      cat(sprintf("  Vector to point: %g, %g\n", point_vector[1], point_vector[2]))
-      cat(sprintf("  Projection parameter t: %g\n", t))
-      cat(sprintf("  Projected point: (%g,%g)\n", proj_x, proj_y))
-      cat(sprintf("  Perpendicular distance (m): %g\n", perp_distance))
-      
-      # Store point info
-      point_info <- list(
-        x = point_x,
-        y = point_y,
-        proj_x = proj_x,
-        proj_y = proj_y,
-        t = t,
-        perp_distance = perp_distance,
-        key = point_key
-      )
-      
-      # Classify point based on projection
-      if (t >= 0 && t <= 1) {
-        cat("  Point will get separate edges\n")
-        points_inside[[length(points_inside) + 1]] <- point_info
-      } else {
-        cat("  Point will get separate edges\n")
-        points_outside[[length(points_outside) + 1]] <- point_info
-      }
-    }
-    
-    # If there are points projecting inside the edge, split it at those points
-    if (length(points_inside) > 0) {
-      # Sort points by their projection parameter t
-      t_values <- sapply(points_inside, function(p) p$t)
-      points_inside <- points_inside[order(t_values)]
-      
-      # Split original edge at projection points
-      prev_id <- from_id
-      prev_lon <- from_lon
-      prev_lat <- from_lat
-      
-      for (j in seq_along(points_inside)) {
-        point_info <- points_inside[[j]]
-        
-        # Skip if we've already connected this point
-        if (point_info$key %in% names(connected_points)) {
-          next
-        }
-        
-        # Generate vertex IDs for both projected and actual points
-        proj_id <- paste0(sample(c(letters, LETTERS, 0:9), 10, replace=TRUE), collapse="")
-        actual_id <- paste0(sample(c(letters, LETTERS, 0:9), 10, replace=TRUE), collapse="")
-        connected_points[[point_info$key]] <- actual_id
-        
-        # Calculate direct distance to projected point using geodist
-        point_df <- data.frame(
-          x = c(prev_lon, point_info$proj_x),
-          y = c(prev_lat, point_info$proj_y)
-        )
-        direct_distance <- as.numeric(geodist::geodist(point_df, measure = "geodesic")[1,2])
-        
-        # Create edge from previous point to projected point
-        split_edge <- edge
-        split_edge$edge_id <- paste0(edge$edge_id, "_split_", j)
-        split_edge$from_id <- prev_id
-        split_edge$from_lon <- prev_lon
-        split_edge$from_lat <- prev_lat
-        split_edge$to_id <- proj_id
-        split_edge$to_lon <- point_info$proj_x
-        split_edge$to_lat <- point_info$proj_y
-        split_edge$d <- direct_distance
-        split_edge$d_weighted <- direct_distance * (edge$d_weighted / edge$d)
-        split_edge$time <- direct_distance * (edge$time / edge$d)
-        split_edge$time_weighted <- direct_distance * (edge$time_weighted / edge$d)
-        result <- rbind(result, split_edge)
-        
-        # Create reverse edge
-        rev_split_edge <- split_edge
-        rev_split_edge$edge_id <- paste0(split_edge$edge_id, "_rev")
-        rev_split_edge$from_id <- proj_id
-        rev_split_edge$from_lon <- point_info$proj_x
-        rev_split_edge$from_lat <- point_info$proj_y
-        rev_split_edge$to_id <- prev_id
-        rev_split_edge$to_lon <- prev_lon
-        rev_split_edge$to_lat <- prev_lat
-        result <- rbind(result, rev_split_edge)
-        
-        # Create perpendicular edge from projected point to actual point
-        perp_edge <- edge
-        perp_edge$edge_id <- paste0(sample(c(letters, LETTERS, 0:9), 10, replace=TRUE), collapse="")
-        perp_edge$from_id <- proj_id
-        perp_edge$from_lon <- point_info$proj_x
-        perp_edge$from_lat <- point_info$proj_y
-        perp_edge$to_id <- actual_id
-        perp_edge$to_lon <- point_info$x
-        perp_edge$to_lat <- point_info$y
-        perp_edge$d <- point_info$perp_distance
-        
-        # Only add perpendicular edges if not intersections_only
-        if (!intersections_only) {
-          if (!is.null(wt_profile)) {
-            # Get weight profile
-            wp <- dodgr:::get_profile(wt_profile, wt_profile_file)
-            way_wt <- wp$value[wp$way == new_edge_type]
-            if (length(way_wt) == 0) {
-              stop(sprintf("No weight found for highway type '%s' in profile '%s'", 
-                         new_edge_type, wt_profile))
-            }
-            
-            # Calculate weights
-            perp_edge$highway <- new_edge_type
-            perp_edge$d_weighted <- point_info$perp_distance / way_wt
-            perp_edge <- dodgr:::set_maxspeed(perp_edge, wt_profile, wt_profile_file) |>
-              dodgr:::weight_by_num_lanes(wt_profile) |>
-              dodgr:::calc_edge_time(wt_profile)
-          } else {
-            perp_edge$d_weighted <- point_info$perp_distance * (edge$d_weighted / edge$d)
-            perp_edge$time <- point_info$perp_distance * (edge$time / edge$d)
-            perp_edge$time_weighted <- point_info$perp_distance * (edge$time_weighted / edge$d)
-          }
-          result <- rbind(result, perp_edge)
-          
-          # Create reverse perpendicular edge
-          perp_edge_rev <- perp_edge
-          perp_edge_rev$edge_id <- paste0(perp_edge$edge_id, "_rev")
-          perp_edge_rev$from_id <- perp_edge$to_id
-          perp_edge_rev$from_lon <- perp_edge$to_lon
-          perp_edge_rev$from_lat <- perp_edge$to_lat
-          perp_edge_rev$to_id <- perp_edge$from_id
-          perp_edge_rev$to_lon <- perp_edge$from_lon
-          perp_edge_rev$to_lat <- perp_edge$from_lat
-          result <- rbind(result, perp_edge_rev)
-        }
-        
-        # Update previous point to projected point
-        prev_id <- proj_id
-        prev_lon <- point_info$proj_x
-        prev_lat <- point_info$proj_y
-      }
-      
-      # Create final edge from last projected point to original end
-      point_df <- data.frame(
-        x = c(prev_lon, to_lon),
-        y = c(prev_lat, to_lat)
-      )
-      direct_distance <- as.numeric(geodist::geodist(point_df, measure = "geodesic")[1,2])
-      
-      # Create edge from last point to end
-      split_edge <- edge
-      split_edge$edge_id <- paste0(edge$edge_id, "_split_", length(points_inside) + 1)
-      split_edge$from_id <- prev_id
-      split_edge$from_lon <- prev_lon
-      split_edge$from_lat <- prev_lat
-      split_edge$to_id <- to_id
-      split_edge$to_lon <- to_lon
-      split_edge$to_lat <- to_lat
-      split_edge$d <- direct_distance
-      split_edge$d_weighted <- direct_distance * (edge$d_weighted / edge$d)
-      split_edge$time <- direct_distance * (edge$time / edge$d)
-      split_edge$time_weighted <- direct_distance * (edge$time_weighted / edge$d)
-      result <- rbind(result, split_edge)
-      
-      # Create reverse edge
-      rev_split_edge <- split_edge
-      rev_split_edge$edge_id <- paste0(split_edge$edge_id, "_rev")
-      rev_split_edge$from_id <- to_id
-      rev_split_edge$from_lon <- to_lon
-      rev_split_edge$from_lat <- to_lat
-      rev_split_edge$to_id <- prev_id
-      rev_split_edge$to_lon <- prev_lon
-      rev_split_edge$to_lat <- prev_lat
-      result <- rbind(result, rev_split_edge)
-    } else {
-      # If no points project inside this edge, keep it and its reverse
-      edges_to_keep <- c(edges_to_keep, edge_id, rev_edge_id)
-      result <- rbind(result, edge)
-      rev_edge <- graph[graph$edge_id == rev_edge_id,]
-      if (nrow(rev_edge) > 0) {
-        result <- rbind(result, rev_edge)
-      }
-    }
-    
-    # Add direct edges for points outside
-    for (point_info in points_outside) {
-      # Skip if we've already connected this point
-      if (point_info$key %in% names(connected_points)) {
-        next
-      }
-      
-      # Generate vertex ID for the point
-      actual_id <- paste0(sample(c(letters, LETTERS, 0:9), 10, replace=TRUE), collapse="")
-      connected_points[[point_info$key]] <- actual_id
-      
-      # Find closest vertex (from or to)
-      point_df <- data.frame(
-        x = c(point_info$x, from_lon, to_lon),
-        y = c(point_info$y, from_lat, to_lat)
-      )
-      distances <- as.numeric(geodist::geodist(point_df, measure = "geodesic")[1,])
-      if (distances[2] <= distances[3]) {
-        # Connect to from_id
-        vertex_id <- from_id
-        vertex_lon <- from_lon
-        vertex_lat <- from_lat
-        direct_distance <- distances[2]
-      } else {
-        # Connect to to_id
-        vertex_id <- to_id
-        vertex_lon <- to_lon
-        vertex_lat <- to_lat
-        direct_distance <- distances[3]
-      }
-      
-      # Create edge from vertex to point
-      direct_edge <- edge
-      direct_edge$edge_id <- paste0(sample(c(letters, LETTERS, 0:9), 10, replace=TRUE), collapse="")
-      direct_edge$from_id <- vertex_id
-      direct_edge$from_lon <- vertex_lon
-      direct_edge$from_lat <- vertex_lat
-      direct_edge$to_id <- actual_id
-      direct_edge$to_lon <- point_info$x
-      direct_edge$to_lat <- point_info$y
-      direct_edge$d <- direct_distance
-      
-      # Only add direct edges if not intersections_only
-      if (!intersections_only) {
-        if (!is.null(wt_profile)) {
-          # Get weight profile
-          wp <- dodgr:::get_profile(wt_profile, wt_profile_file)
-          way_wt <- wp$value[wp$way == new_edge_type]
-          if (length(way_wt) == 0) {
-            stop(sprintf("No weight found for highway type '%s' in profile '%s'", 
-                       new_edge_type, wt_profile))
-          }
-          
-          # Calculate weights
-          direct_edge$highway <- new_edge_type
-          direct_edge$d_weighted <- direct_distance / way_wt
-          direct_edge <- dodgr:::set_maxspeed(direct_edge, wt_profile, wt_profile_file) |>
-            dodgr:::weight_by_num_lanes(wt_profile) |>
-            dodgr:::calc_edge_time(wt_profile)
-        } else {
-          direct_edge$d_weighted <- direct_distance * (edge$d_weighted / edge$d)
-          direct_edge$time <- direct_distance * (edge$time / edge$d)
-          direct_edge$time_weighted <- direct_distance * (edge$time_weighted / edge$d)
-        }
-        result <- rbind(result, direct_edge)
-        
-        # Create reverse edge
-        direct_edge_rev <- direct_edge
-        direct_edge_rev$edge_id <- paste0(direct_edge$edge_id, "_rev")
-        direct_edge_rev$from_id <- direct_edge$to_id
-        direct_edge_rev$from_lon <- direct_edge$to_lon
-        direct_edge_rev$from_lat <- direct_edge$to_lat
-        direct_edge_rev$to_id <- direct_edge$from_id
-        direct_edge_rev$to_lon <- direct_edge$from_lon
-        direct_edge_rev$to_lat <- direct_edge$from_lat
-        result <- rbind(result, direct_edge_rev)
-      }
-    }
+  # Generate new vertex IDs for the points if needed
+  if (!"id" %in% colnames(xy)) {
+    xy$id <- sapply(1:nrow(xy), function(i) {
+      paste0(sample(c(letters, LETTERS, 0:9), 10, replace=TRUE), collapse="")
+    })
   }
   
-  # Second pass: process edge_id "2" only if edge_id "1" was kept
-  if ("1" %in% edges_to_keep) {
-    edge <- graph[graph$edge_id == "2",]
-    if (nrow(edge) > 0) {
-      edges_to_keep <- c(edges_to_keep, "2")
-      result <- rbind(result, edge)
+  # Find closest edges for each point
+  message("Finding closest edges...")
+  closest_edges <- dodgr::match_pts_to_graph(graph = graph, xy = xy, connected = FALSE)
+  
+  # Create new edges connecting points to their closest edges
+  new_edges <- data.frame()
+  
+  for (i in seq_len(nrow(xy))) {
+    edge_idx <- closest_edges[i]
+    if (is.na(edge_idx)) next
+    
+    edge <- graph[edge_idx, ]
+    point_x <- xy$x[i]
+    point_y <- xy$y[i]
+    point_id <- xy$id[i]
+    
+    # Calculate projection onto edge
+    edge_vector <- c(edge$to_lon - edge$from_lon, edge$to_lat - edge$from_lat)
+    point_vector <- c(point_x - edge$from_lon, point_y - edge$from_lat)
+    t <- sum(point_vector * edge_vector) / sum(edge_vector^2)
+    t <- max(0, min(1, t))  # Clamp to [0,1]
+    
+    # Calculate projected point
+    proj_x <- edge$from_lon + t * edge_vector[1]
+    proj_y <- edge$from_lat + t * edge_vector[2]
+    
+    # Calculate distance using geodist
+    point_df <- data.frame(
+      x = c(point_x, proj_x),
+      y = c(point_y, proj_y)
+    )
+    distance <- units::set_units(
+      as.numeric(geodist::geodist(point_df, measure = "geodesic")[1,2]),
+      "m"
+    )
+    
+    # Check if distance exceeds max_length (with tolerance)
+    if (!is.null(max_length)) {
+      if (as.numeric(distance) > as.numeric(max_length) * (1 + tolerance)) {
+        stop(sprintf("Distance %.2f m exceeds max_length %.2f m (with tolerance %.2f%%) for point %d", 
+                     as.numeric(distance), as.numeric(max_length), tolerance * 100, i))
+      }
     }
+    
+    # Create new vertex ID for projection point
+    proj_id <- paste0(sample(c(letters, LETTERS, 0:9), 10, replace=TRUE), collapse="")
+    
+    # Create edge from point to projection
+    new_edge <- edge
+    new_edge$edge_id <- paste0("new_", i)
+    new_edge$from_id <- point_id
+    new_edge$from_lon <- point_x
+    new_edge$from_lat <- point_y
+    new_edge$to_id <- proj_id
+    new_edge$to_lon <- proj_x
+    new_edge$to_lat <- proj_y
+    new_edge$d <- as.numeric(distance)
+    
+    if (!is.null(wt_profile)) {
+      # Get weight profile
+      wp <- dodgr:::get_profile(wt_profile, wt_profile_file)
+      way_wt <- wp$value[wp$way == new_edge_type]
+      if (length(way_wt) == 0) {
+        stop(sprintf("No weight found for highway type '%s' in profile '%s'", 
+                   new_edge_type, wt_profile))
+      }
+      
+      # Calculate weights
+      new_edge$highway <- new_edge_type
+      new_edge$d_weighted <- as.numeric(distance) / way_wt
+      new_edge <- dodgr:::set_maxspeed(new_edge, wt_profile, wt_profile_file) |>
+        dodgr:::weight_by_num_lanes(wt_profile) |>
+        dodgr:::calc_edge_time(wt_profile)
+    } else {
+      new_edge$d_weighted <- as.numeric(distance) * (edge$d_weighted / edge$d)
+      new_edge$time <- as.numeric(distance) * (edge$time / edge$d)
+      new_edge$time_weighted <- as.numeric(distance) * (edge$time_weighted / edge$d)
+    }
+    
+    # Create reverse edge
+    rev_edge <- new_edge
+    rev_edge$edge_id <- paste0(new_edge$edge_id, "_rev")
+    rev_edge$from_id <- new_edge$to_id
+    rev_edge$from_lon <- new_edge$to_lon
+    rev_edge$from_lat <- new_edge$to_lat
+    rev_edge$to_id <- new_edge$from_id
+    rev_edge$to_lon <- new_edge$from_lon
+    rev_edge$to_lat <- new_edge$from_lat
+    
+    # Add edges to result
+    new_edges <- rbind(new_edges, new_edge, rev_edge)
+    
+    # Split the original edge at the projection point
+    edge1 <- edge
+    edge1$edge_id <- paste0(edge$edge_id, "_split1_", i)
+    edge1$to_id <- proj_id
+    edge1$to_lon <- proj_x
+    edge1$to_lat <- proj_y
+    edge1$d <- as.numeric(units::set_units(
+      geodist::geodist(
+        matrix(c(edge1$from_lon, edge1$from_lat), ncol = 2, dimnames=list(NULL, c("x", "y"))),
+        matrix(c(edge1$to_lon, edge1$to_lat), ncol = 2, dimnames=list(NULL, c("x", "y"))),
+        measure = "geodesic"
+      )[1,1],
+      "m"
+    ))
+    edge1$d_weighted <- edge1$d * (edge$d_weighted / edge$d)
+    edge1$time <- edge1$d * (edge$time / edge$d)
+    edge1$time_weighted <- edge1$d * (edge$time_weighted / edge$d)
+    
+    edge2 <- edge
+    edge2$edge_id <- paste0(edge$edge_id, "_split2_", i)
+    edge2$from_id <- proj_id
+    edge2$from_lon <- proj_x
+    edge2$from_lat <- proj_y
+    edge2$d <- as.numeric(units::set_units(
+      geodist::geodist(
+        matrix(c(edge2$from_lon, edge2$from_lat), ncol = 2, dimnames=list(NULL, c("x", "y"))),
+        matrix(c(edge2$to_lon, edge2$to_lat), ncol = 2, dimnames=list(NULL, c("x", "y"))),
+        measure = "geodesic"
+      )[1,1],
+      "m"
+    ))
+    edge2$d_weighted <- edge2$d * (edge$d_weighted / edge$d)
+    edge2$time <- edge2$d * (edge$time / edge$d)
+    edge2$time_weighted <- edge2$d * (edge$time_weighted / edge$d)
+    
+    # Add split edges to result
+    new_edges <- rbind(new_edges, edge1, edge2)
   }
   
-  # Only keep edges that were marked to keep
+  # Remove original edges that were split and add new edges
   result <- rbind(
-    result[!(result$edge_id %in% graph$edge_id),],  # Keep all new edges
-    result[result$edge_id %in% edges_to_keep,]      # Keep only original edges that were marked to keep
+    graph[!graph$edge_id %in% closest_edges,],  # Keep edges that weren't split
+    new_edges                                    # Add new edges
   )
   
-  # Return result with same columns as input graph
-  required_cols <- names(graph)
-  
-  missing_cols <- setdiff(required_cols, names(result))
+  # Ensure result has same columns as input graph
+  missing_cols <- setdiff(names(graph), names(result))
   if (length(missing_cols) > 0) {
     for (col in missing_cols) {
       result[[col]] <- NA

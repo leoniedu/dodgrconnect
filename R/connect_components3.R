@@ -1,24 +1,52 @@
 #' Connect Graph Components
 #'
-#' This function connects disconnected components of a graph by adding edges between
-#' vertices that are within a specified distance threshold. For graphs with more than
-#' two components, it uses a minimum spanning tree (MST) approach to determine the
-#' optimal set of connections between components.
+#' This function connects multiple components of a graph by identifying vertices that
+#' are within a specified distance threshold and adding edges between them. It uses
+#' spatial indexing for efficient pair identification and add_nodes_to_graph2 for
+#' proper edge creation.
 #'
-#' The function uses spatial indexing via sf::st_is_within_distance for efficient
-#' distance calculations between vertices.
+#' The function processes components sequentially, starting with the first component
+#' and attempting to connect each subsequent component to the growing connected
+#' component. For each pair of components, it:
+#' 1. Uses spatial indexing via sf::st_is_within_distance to efficiently find
+#'    vertex pairs that are within the distance threshold
+#' 2. Uses add_nodes_to_graph2 to properly add the vertices and edges with correct
+#'    weights and properties
+#' 3. Combines the graphs and updates component IDs
 #'
-#' @param graph A data frame representing a graph with at least x, y coordinates
-#' @param distance_threshold Distance threshold in meters for connecting components
+#' @param graph A data frame or dodgr_streetnet object containing the graph
+#' @param distance_threshold Maximum distance in meters to consider for connecting vertices
 #' @param connection_type Type of way to use for connecting components (e.g., "path", "footway")
-#' @param wt_profile Weight profile to use for the new edges
-#' @param wt_profile_file Optional path to a weight profile file
-#' @param surface Surface type for the new edges
-#' @param components_to_join Components to connect
-#' @return A modified graph with components connected
+#' @param wt_profile Weight profile to use for calculating edge weights and times
+#' @param wt_profile_file Optional path to a custom weight profile file
+#' @param surface Surface type for the new edges (e.g., "paved")
+#' @param components_to_join Integer vector specifying the component IDs to connect in sequence
+#'
+#' @return A modified graph with the specified components connected. Components are
+#'         connected in sequence, with each subsequent component being connected to
+#'         the growing connected component if possible. Component IDs are updated
+#'         to reflect the new connections. If a component cannot be connected
+#'         (no vertices within distance_threshold), it remains unchanged.
+#'
+#' @examples
+#' \dontrun{
+#' library(dodgr)
+#' # Load a street network
+#' net <- weight_streetnet(hampi)
+#' 
+#' # Connect components 1, 2, and 3 with footway edges
+#' net_connected <- connect_components3(
+#'   graph = net,
+#'   distance_threshold = 50,  # 50 meters
+#'   connection_type = "footway",
+#'   wt_profile = "foot",
+#'   surface = "paved",
+#'   components_to_join = c(1, 2, 3)
+#' )
+#' }
+#'
 #' @importFrom sf st_as_sf st_is_within_distance
-#' @importFrom units set_units
-#' @noRd
+#' @export
 connect_components3 <- function(graph, 
                              distance_threshold = 20,
                              connection_type,
@@ -90,14 +118,14 @@ connect_components3 <- function(graph,
     graph0 <- graph[!graph$component %in%components_to_join, ] 
     graph1 <- graph[graph$component == comp1, ] 
     for (comp2 in components_to_join[-1]) {
+        cli::cli_inform("Trying to join {comp1} to {comp2}")
         # Get vertices for each component
-        vert1 <- dodgr_vertices(graph1)
+        vert1 <- dodgr::dodgr_vertices(graph1)
         vert2 <- vertices[vertices$component == comp2, ]
         graph2 <- graph[graph$component == comp2, ] 
         # Convert to sf objects for distance calculation
         vert1_sf <- sf::st_as_sf(vert1, coords = c("x", "y"), crs = 4326, remove = FALSE)
         vert2_sf <- sf::st_as_sf(vert2, coords = c("x", "y"), crs = 4326, remove = FALSE)
-        
         # Convert threshold to units object
         dist_threshold <- units::set_units(distance_threshold, "m")
         
@@ -108,8 +136,10 @@ connect_components3 <- function(graph,
         # Convert sparse format to matrix of pairs
         n_pairs <- sum(lengths(pairs))
         close_pairs <- if (n_pairs == 0) {
+            cli::cli_inform("Not possible to join {comp1} to {comp2}")
             matrix(ncol = 2, nrow = 0)
         } else {
+            cli::cli_inform("Joining {comp1} to {comp2}")
             result <- matrix(ncol = 2, nrow = n_pairs)
             idx <- 1
             for (i in seq_along(pairs)) {
@@ -122,7 +152,6 @@ connect_components3 <- function(graph,
             }
             result
         }
-        browser()
         if (nrow(close_pairs) > 0) {
             # Get profile weight for connection_type
             wp <- dodgr:::get_profile(wt_profile, wt_profile_file)
@@ -144,7 +173,7 @@ connect_components3 <- function(graph,
                                           new_edge_type = connection_type,
                                           wt_profile = wt_profile,
                                           wt_profile_file = wt_profile_file,
-                                          surface = surface)%>%
+                                          surface = surface, max_length = dist_threshold*1.1)%>%
                 bind_rows(graph2)%>%
                 std_graph()%>%
                 mutate(component=comp1)

@@ -12,6 +12,8 @@ Imports:
     checkmate (>= 2.2.0),
     cli (>= 3.6.0),
     dodgr (>= 0.2.21),
+    future (>= 1.33.0),
+    future.apply (>= 1.11.0),
     glue,
     stats,
     utils

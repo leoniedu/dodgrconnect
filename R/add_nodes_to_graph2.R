@@ -29,8 +29,6 @@
 #' @param xy A `data.frame` or `matrix` of points to add. If a matrix, must have 2 columns
 #'        for lon and lat coordinates. If a data.frame, must include 'lon' and 'lat' columns.
 #'        Optionally can include 'id' column to specify vertex IDs.
-#' @param dist_tol Minimum distance used to identify points lying directly on edges,
-#'        expressed in units of the distance column of `graph`
 #' @param intersections_only If TRUE, only add nodes at intersections between
 #' edges, otherwise add all nodes
 #' @param new_edge_type Type of new edges to be added
@@ -69,7 +67,6 @@
 #' @export
 add_nodes_to_graph2 <- function (graph,
                                  xy,
-                                 dist_tol = 1e-6,
                                  intersections_only = FALSE,
                                  new_edge_type = NULL,
                                  wt_profile = NULL,
@@ -100,59 +97,66 @@ add_nodes_to_graph2 <- function (graph,
     message("Number of vertex IDs: 2")
   }
   
-  # Check xy columns
-  if (is.null(colnames(xy))) {
-    colnames(xy) <- c("x", "y")
-  }
-  message("XY columns: ", paste(colnames(xy), collapse=", "))
-  
   # Generate new vertex IDs for the points if needed
-  if (!"id" %in% colnames(xy)) {
-    xy$id <- sapply(1:nrow(xy), function(i) {
+  xyf <- data.frame(xy)
+  xy <- pre_process_xy(xy)
+  xyf <- xyf%>%select(-any_of(c("x", "y")))%>%bind_cols(xy)
+  if (!"id" %in% colnames(xyf)) {
+    xyf$id <- sapply(1:nrow(xy), function(i) {
       paste0(sample(c(letters, LETTERS, 0:9), 10, replace=TRUE), collapse="")
     })
   }
   
   # Find closest edges for each point
   message("Finding closest edges...")
-  closest_edges <- dodgr::match_pts_to_graph(graph = graph, xy = xy, connected = FALSE)
-  
+  closest_edges_0 <- dodgr::match_pts_to_graph(graph = graph, xy = xy, connected = FALSE, distances = TRUE)%>%mutate(xy_index=1:n())
+  closest_edges <- closest_edges_0%>%filter(abs(d_signed)<=as.numeric(max_length))
+  not_connected <- nrow(closest_edges_0)-nrow(closest_edges)
+  if (not_connected>0) {
+    cli::cli_alert_warning("{not_connected} points not connected ")
+  }
+  stopifnot(nrow(closest_edges)>0)
+  ## 
+  xy <- xy[closest_edges$xy_index,]
+  xyf <- xyf[closest_edges$xy_index,]
   # Create new edges connecting points to their closest edges
   new_edges <- data.frame()
-  
+  edge_problems <- data.frame()
   for (i in seq_len(nrow(xy))) {
-    edge_idx <- closest_edges[i]
+    edge_idx <- closest_edges$index[i]
     if (is.na(edge_idx)) next
-    
     edge <- graph[edge_idx, ]
     point_x <- xy$x[i]
     point_y <- xy$y[i]
-    point_id <- xy$id[i]
-    
-    # Calculate projection onto edge
-    edge_vector <- c(edge$to_lon - edge$from_lon, edge$to_lat - edge$from_lat)
-    point_vector <- c(point_x - edge$from_lon, point_y - edge$from_lat)
-    t <- sum(point_vector * edge_vector) / sum(edge_vector^2)
-    t <- max(0, min(1, t))  # Clamp to [0,1]
-    
-    # Calculate projected point
-    proj_x <- edge$from_lon + t * edge_vector[1]
-    proj_y <- edge$from_lat + t * edge_vector[2]
+    point_id <- xyf$id[i]
+    proj_x <- closest_edges$x[i]
+    proj_y <- closest_edges$y[i]
+
+    # Verification of points and edges
     
     # Calculate distance using geodist
     point_df <- data.frame(
       x = c(point_x, proj_x),
       y = c(point_y, proj_y)
     )
-    distance <- units::set_units(
-      as.numeric(geodist::geodist(point_df, measure = "geodesic")[1,2]),
-      "m"
-    )
     
+    # Use geodist distance for river edges, otherwise use dodgr's distance
+    if (edge$highway == "river") {
+      distance <- units::set_units(
+        as.numeric(geodist::geodist(point_df, measure = "geodesic")[1,2]),
+        "m"
+      )
+    } else {
+      distance <- units::set_units(abs(closest_edges$d_signed[i]), "m")
+    }
+
+    if (abs(abs(closest_edges$d_signed[i])-as.numeric(distance))>1) {
+      edge_problems <- bind_rows(edge_problems, edge%>%bind_cols(tibble(point_x=point_x, point_y=point_y, proj_x=proj_x, proj_y=proj_y, distance=as.numeric(distance), distance_dodgr=closest_edges$d_signed[i])))
+    }
     # Check if distance exceeds max_length (with tolerance)
     if (!is.null(max_length)) {
       if (as.numeric(distance) > as.numeric(max_length) * (1 + tolerance)) {
-        stop(sprintf("Distance %.2f m exceeds max_length %.2f m (with tolerance %.2f%%) for point %d", 
+        warning(sprintf("Distance %.2f m exceeds max_length %.2f m (with tolerance %.2f%%) for point %d", 
                      as.numeric(distance), as.numeric(max_length), tolerance * 100, i))
       }
     }
@@ -170,6 +174,7 @@ add_nodes_to_graph2 <- function (graph,
     new_edge$to_lon <- proj_x
     new_edge$to_lat <- proj_y
     new_edge$d <- as.numeric(distance)
+    new_edge$d_dodgr <- abs(closest_edges$d_signed[i])
     
     if (!is.null(wt_profile)) {
       # Get weight profile
@@ -241,13 +246,14 @@ add_nodes_to_graph2 <- function (graph,
     edge2$time_weighted <- edge2$d * (edge$time_weighted / edge$d)
     
     # Add split edges to result
-    new_edges <- rbind(new_edges, edge1, edge2)
+    new_edges <- bind_rows(new_edges, edge1, edge2)
   }
   
   # Remove original edges that were split and add new edges
-  result <- rbind(
-    graph[!graph$edge_id %in% closest_edges,],  # Keep edges that weren't split
-    new_edges                                    # Add new edges
+  graph$edge_id <- as.character(graph$edge_id)
+  result <- bind_rows(
+      graph[-closest_edges$index,],  # Keep edges that weren't split
+      new_edges                      # Add new edges
   )
   
   # Ensure result has same columns as input graph
@@ -259,92 +265,92 @@ add_nodes_to_graph2 <- function (graph,
   }
   
   result <- result[, intersect(names(graph), names(result))]
-  return(result)
+  return(list(result=result, edge_problems=edge_problems))
 }
 
-find_points_on_edge <- function(from_lon, from_lat, to_lon, to_lat,
-                               points_x, points_y, dist_tol = 1e-6) {
-  # Convert points to matrix format
-  points_mat <- matrix(c(points_x, points_y), ncol = 2)
-  start_mat <- matrix(c(from_lon, from_lat), nrow = 1)
-  end_mat <- matrix(c(to_lon, to_lat), nrow = 1)
-  
-  # Calculate edge vector
-  edge_vec <- c(to_lon - from_lon, to_lat - from_lat)
-  edge_length_sq <- sum(edge_vec^2)
-  
-  # If edge has zero length, return empty result
-  if (edge_length_sq < 1e-12) {
-    return(data.frame(x = numeric(0), y = numeric(0), dist = numeric(0), merge = logical(0)))
-  }
-  
-  # Calculate edge length in meters using geodist
-  edge_df <- data.frame(x = c(from_lon, to_lon), y = c(from_lat, to_lat))
-  edge_length_m <- as.numeric(geodist::geodist(edge_df, measure = "geodesic")[1,2])
-  
-  # For each point, calculate projection onto line
-  n_points <- length(points_x)
-  on_edge <- logical(n_points)
-  distances <- numeric(n_points)
-  merge_points <- logical(n_points)
-  
-  for (i in seq_len(n_points)) {
-    # Vector from edge start to point
-    point_vec <- c(points_x[i] - from_lon, points_y[i] - from_lat)
-    
-    # Calculate projection onto edge
-    t <- sum(point_vec * edge_vec) / edge_length_sq
-    
-    # Calculate nearest point based on projection parameter t
-    if (t < 0) {
-      # Point projects before start of edge, use start point
-      nearest_x <- from_lon
-      nearest_y <- from_lat
-      t_clamped <- 0
-    } else if (t > 1) {
-      # Point projects after end of edge, use end point
-      nearest_x <- to_lon
-      nearest_y <- to_lat
-      t_clamped <- 1
-    } else {
-      # Point projects onto edge, calculate projected point
-      nearest_x <- from_lon + t * edge_vec[1]
-      nearest_y <- from_lat + t * edge_vec[2]
-      t_clamped <- t
-    }
-    
-    # Calculate distance using geodist
-    point_df <- data.frame(
-      x = c(points_x[i], nearest_x),
-      y = c(points_y[i], nearest_y)
-    )
-    dist_m <- as.numeric(geodist::geodist(point_df, measure = "geodesic")[1,2])
-    
-    # Print debug info
-    message(sprintf("Point %d: (%g,%g)", i, points_x[i], points_y[i]))
-    message(sprintf("  Vector to point: %g, %g", point_vec[1], point_vec[2]))
-    message(sprintf("  Projection parameter t: %g", t))
-    message(sprintf("  Projected point: (%g,%g)", nearest_x, nearest_y))
-    message(sprintf("  Perpendicular distance (m): %g", dist_m))
-    message(sprintf("  Edge length (m): %g", edge_length_m))
-    
-    # Always include the point, but mark for merging if very close
-    on_edge[i] <- TRUE
-    distances[i] <- t_clamped
-    merge_points[i] <- dist_m < dist_tol
-    
-    if (merge_points[i]) {
-      message("  Point will be merged (distance < tolerance)")
-    } else {
-      message("  Point will get separate edges")
-    }
-  }
-  
-  # Return points that are on the edge
-  return(data.frame(
-    x = points_x[on_edge],
-    y = points_y[on_edge],
-    dist = distances[on_edge],
-    merge = merge_points[on_edge]
-  ))
-}
+# find_points_on_edge <- function(from_lon, from_lat, to_lon, to_lat,
+#                                points_x, points_y, dist_tol = 1e-6) {
+#   # Convert points to matrix format
+#   points_mat <- matrix(c(points_x, points_y), ncol = 2)
+#   start_mat <- matrix(c(from_lon, from_lat), nrow = 1)
+#   end_mat <- matrix(c(to_lon, to_lat), nrow = 1)
+#   
+#   # Calculate edge vector
+#   edge_vec <- c(to_lon - from_lon, to_lat - from_lat)
+#   edge_length_sq <- sum(edge_vec^2)
+#   
+#   # If edge has zero length, return empty result
+#   if (edge_length_sq < 1e-12) {
+#     return(data.frame(x = numeric(0), y = numeric(0), dist = numeric(0), merge = logical(0)))
+#   }
+#   
+#   # Calculate edge length in meters using geodist
+#   edge_df <- data.frame(x = c(from_lon, to_lon), y = c(from_lat, to_lat))
+#   edge_length_m <- as.numeric(geodist::geodist(edge_df, measure = "geodesic")[1,2])
+#   
+#   # For each point, calculate projection onto line
+#   n_points <- length(points_x)
+#   on_edge <- logical(n_points)
+#   distances <- numeric(n_points)
+#   merge_points <- logical(n_points)
+#   
+#   for (i in seq_len(n_points)) {
+#     # Vector from edge start to point
+#     point_vec <- c(points_x[i] - from_lon, points_y[i] - from_lat)
+#     
+#     # Calculate projection onto edge
+#     t <- sum(point_vec * edge_vec) / edge_length_sq
+#     
+#     # Calculate nearest point based on projection parameter t
+#     if (t < 0) {
+#       # Point projects before start of edge, use start point
+#       nearest_x <- from_lon
+#       nearest_y <- from_lat
+#       t_clamped <- 0
+#     } else if (t > 1) {
+#       # Point projects after end of edge, use end point
+#       nearest_x <- to_lon
+#       nearest_y <- to_lat
+#       t_clamped <- 1
+#     } else {
+#       # Point projects onto edge, calculate projected point
+#       nearest_x <- from_lon + t * edge_vec[1]
+#       nearest_y <- from_lat + t * edge_vec[2]
+#       t_clamped <- t
+#     }
+#     
+#     # Calculate distance using geodist
+#     point_df <- data.frame(
+#       x = c(points_x[i], nearest_x),
+#       y = c(points_y[i], nearest_y)
+#     )
+#     dist_m <- as.numeric(geodist::geodist(point_df, measure = "geodesic")[1,2])
+#     
+#     # Print debug info
+#     message(sprintf("Point %d: (%g,%g)", i, points_x[i], points_y[i]))
+#     message(sprintf("  Vector to point: %g, %g", point_vec[1], point_vec[2]))
+#     message(sprintf("  Projection parameter t: %g", t))
+#     message(sprintf("  Projected point: (%g,%g)", nearest_x, nearest_y))
+#     message(sprintf("  Perpendicular distance (m): %g", dist_m))
+#     message(sprintf("  Edge length (m): %g", edge_length_m))
+#     
+#     # Always include the point, but mark for merging if very close
+#     on_edge[i] <- TRUE
+#     distances[i] <- t_clamped
+#     merge_points[i] <- dist_m < dist_tol
+#     
+#     if (merge_points[i]) {
+#       message("  Point will be merged (distance < tolerance)")
+#     } else {
+#       message("  Point will get separate edges")
+#     }
+#   }
+#   
+#   # Return points that are on the edge
+#   return(data.frame(
+#     x = points_x[on_edge],
+#     y = points_y[on_edge],
+#     dist = distances[on_edge],
+#     merge = merge_points[on_edge]
+#   ))
+# }

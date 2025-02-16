@@ -72,7 +72,7 @@ add_nodes_to_graph2 <- function (graph,
                                  wt_profile = NULL,
                                  wt_profile_file = NULL,
                                  surface = NULL,
-                                 max_length = NULL,
+                                 max_length = Inf,
                                  tolerance = 1e-3) {
   
   # Validate tolerance
@@ -115,13 +115,14 @@ add_nodes_to_graph2 <- function (graph,
   if (not_connected>0) {
     cli::cli_alert_warning("{not_connected} points not connected ")
   }
-  stopifnot(nrow(closest_edges)>0)
+  if(nrow(closest_edges)==0) {
+    return(graph)
+  }
   ## 
   xy <- xy[closest_edges$xy_index,]
   xyf <- xyf[closest_edges$xy_index,]
   # Create new edges connecting points to their closest edges
   new_edges <- data.frame()
-  edge_problems <- data.frame()
   for (i in seq_len(nrow(xy))) {
     edge_idx <- closest_edges$index[i]
     if (is.na(edge_idx)) next
@@ -131,36 +132,6 @@ add_nodes_to_graph2 <- function (graph,
     point_id <- xyf$id[i]
     proj_x <- closest_edges$x[i]
     proj_y <- closest_edges$y[i]
-
-    # Verification of points and edges
-    
-    # Calculate distance using geodist
-    point_df <- data.frame(
-      x = c(point_x, proj_x),
-      y = c(point_y, proj_y)
-    )
-    
-    # Use geodist distance for river edges, otherwise use dodgr's distance
-    if (edge$highway == "river") {
-      distance <- units::set_units(
-        as.numeric(geodist::geodist(point_df, measure = "geodesic")[1,2]),
-        "m"
-      )
-    } else {
-      distance <- units::set_units(abs(closest_edges$d_signed[i]), "m")
-    }
-
-    if (abs(abs(closest_edges$d_signed[i])-as.numeric(distance))>1) {
-      edge_problems <- bind_rows(edge_problems, edge%>%bind_cols(tibble(point_x=point_x, point_y=point_y, proj_x=proj_x, proj_y=proj_y, distance=as.numeric(distance), distance_dodgr=closest_edges$d_signed[i])))
-    }
-    # Check if distance exceeds max_length (with tolerance)
-    if (!is.null(max_length)) {
-      if (as.numeric(distance) > as.numeric(max_length) * (1 + tolerance)) {
-        warning(sprintf("Distance %.2f m exceeds max_length %.2f m (with tolerance %.2f%%) for point %d", 
-                     as.numeric(distance), as.numeric(max_length), tolerance * 100, i))
-      }
-    }
-    
     # Create new vertex ID for projection point
     proj_id <- paste0(sample(c(letters, LETTERS, 0:9), 10, replace=TRUE), collapse="")
     
@@ -173,9 +144,7 @@ add_nodes_to_graph2 <- function (graph,
     new_edge$to_id <- proj_id
     new_edge$to_lon <- proj_x
     new_edge$to_lat <- proj_y
-    new_edge$d <- as.numeric(distance)
-    new_edge$d_dodgr <- abs(closest_edges$d_signed[i])
-    
+    new_edge$d <- abs(closest_edges$d_signed[i])
     if (!is.null(wt_profile)) {
       # Get weight profile
       wp <- dodgr:::get_profile(wt_profile, wt_profile_file)
@@ -187,14 +156,14 @@ add_nodes_to_graph2 <- function (graph,
       
       # Calculate weights
       new_edge$highway <- new_edge_type
-      new_edge$d_weighted <- as.numeric(distance) / way_wt
+      new_edge$d_weighted <- new_edge$d / way_wt
       new_edge <- dodgr:::set_maxspeed(new_edge, wt_profile, wt_profile_file) |>
         dodgr:::weight_by_num_lanes(wt_profile) |>
         dodgr:::calc_edge_time(wt_profile)
     } else {
-      new_edge$d_weighted <- as.numeric(distance) * (edge$d_weighted / edge$d)
-      new_edge$time <- as.numeric(distance) * (edge$time / edge$d)
-      new_edge$time_weighted <- as.numeric(distance) * (edge$time_weighted / edge$d)
+      new_edge$d_weighted <- new_edge$d * (edge$d_weighted / edge$d)
+      new_edge$time <- new_edge$d * (edge$time / edge$d)
+      new_edge$time_weighted <- new_edge$d * (edge$time_weighted / edge$d)
     }
     
     # Create reverse edge
@@ -265,7 +234,7 @@ add_nodes_to_graph2 <- function (graph,
   }
   
   result <- result[, intersect(names(graph), names(result))]
-  return(list(result=result, edge_problems=edge_problems))
+  return(result)
 }
 
 # find_points_on_edge <- function(from_lon, from_lat, to_lon, to_lat,

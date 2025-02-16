@@ -19,7 +19,6 @@
 #' @param connection_type Type of way to use for connecting components (e.g., "path", "footway")
 #' @param wt_profile Weight profile to use for calculating edge weights and times
 #' @param wt_profile_file Optional path to a custom weight profile file
-#' @param surface Surface type for the new edges (e.g., "paved")
 #' @param components_to_join Integer vector specifying the component IDs to connect in sequence
 #'
 #' @return A modified graph with the specified components connected. Components are
@@ -40,7 +39,6 @@
 #'   distance_threshold = 50,  # 50 meters
 #'   connection_type = "footway",
 #'   wt_profile = "foot",
-#'   surface = "paved",
 #'   components_to_join = c(1, 2, 3)
 #' )
 #' }
@@ -52,7 +50,6 @@ connect_components3 <- function(graph,
                              connection_type,
                              wt_profile,
                              wt_profile_file = NULL,
-                             surface = "paved",
                              components_to_join) {
     # Store original graph class
     graph_class <- class(graph)
@@ -72,8 +69,8 @@ connect_components3 <- function(graph,
     dodgr::clear_dodgr_cache()
     
     # Input validation
-    if (missing(connection_type) || missing(wt_profile) || missing(surface)) {
-        stop("connection_type, wt_profile, and surface must be specified")
+    if (missing(connection_type) || missing(wt_profile) ) {
+        stop("connection_type and wt_profile must be specified")
     }
 
     # Verify connection_type has valid speed in profile
@@ -172,8 +169,7 @@ connect_components3 <- function(graph,
             graph1 <- add_nodes_to_graph2(graph1, vert2_sf[unique(close_pairs[,2]),] , intersections_only = FALSE,
                                           new_edge_type = connection_type,
                                           wt_profile = wt_profile,
-                                          wt_profile_file = wt_profile_file,
-                                          surface = surface, max_length = dist_threshold*1.1)%>%
+                                          wt_profile_file = wt_profile_file, max_length = dist_threshold*1.1)%>%
                 bind_rows(graph2)%>%
                 std_graph()%>%
                 mutate(component=comp1)

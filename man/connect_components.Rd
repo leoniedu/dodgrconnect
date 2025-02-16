@@ -2,7 +2,7 @@
 % Please edit documentation in R/connect_components.R
 \name{connect_components}
 \alias{connect_components}
-\title{Connect Disjoint Components in a Graph}
+\title{Connect Graph Components}
 \usage{
 connect_components(
   graph,
@@ -11,40 +11,89 @@ connect_components(
   wt_profile,
   wt_profile_file = NULL,
   surface,
-  n_components = Inf
+  distance_matrix = NULL
 )
 }
 \arguments{
-\item{graph}{A graph object with spatial coordinates}
+\item{graph}{A data frame or dodgr_streetnet object with columns 'from_id', 'to_id',
+and 'component'. Vertex coordinates will be obtained from the graph using
+dodgr_vertices(), which expects coordinates in the graph's edge columns
+(from_lon, from_lat, to_lon, to_lat).}
 
-\item{distance_threshold}{Distance threshold in meters to connect components.}
+\item{distance_threshold}{Distance threshold in meters. Vertices from different
+components that are closer than this threshold will be connected. Components
+that are farther apart than this threshold will remain disconnected, and a
+warning will be issued with the minimum distances between components.}
 
-\item{connection_type}{Type of new edges (e.g., "footway", "cycleway")}
+\item{connection_type}{Type of connection to create between components (e.g.,
+'footway', 'residential'). Must be a valid highway type in the weight profile.}
 
-\item{wt_profile}{Weighting profile to use (e.g., "foot", "bicycle")}
+\item{wt_profile}{Weight profile to use for the new edges (e.g., 'foot', 'bicycle').}
 
-\item{wt_profile_file}{Path to profile file. If NULL, uses default profiles}
+\item{wt_profile_file}{Optional path to a custom weight profile JSON file.}
 
-\item{surface}{Surface type for new connections (e.g., "paved", "asphalt")}
+\item{surface}{Surface type for the new edges (e.g., 'paved', 'unpaved').}
 
-\item{n_components}{Maximum number of components to connect. Default Inf connects all}
+\item{distance_matrix}{Optional pre-computed distance matrix between components.
+If NULL (default), it will be calculated using component_distances().
+The matrix should have distances greater than distance_threshold set to NA.}
 }
 \value{
-Updated graph with new edges connecting components
+A modified version of the input graph with new edges connecting components
+that are within distance_threshold of each other. The returned graph will
+have the same class and structure as the input graph. Components that could
+not be connected (due to being farther apart than distance_threshold) will
+remain disconnected.
 }
 \description{
-This function connects disjoint components of a graph by adding edges between
-vertices that are within a specified distance threshold. Components are processed
-in order of size (largest first), and each component is connected to the
-previously connected network.
+This function connects disconnected components of a graph by adding edges between
+vertices that are within a specified distance threshold. For graphs with more than
+two components, it uses a minimum spanning tree (MST) approach to determine the
+sequence of components to connect, starting from component 1 (assumed to be the
+largest component). For each pair of components in the MST sequence, it adds edges
+between all vertex pairs that are within the threshold distance.
+}
+\details{
+The function follows these steps:
+\enumerate{
+\item Gets vertex coordinates from the graph using dodgr_vertices()
+\item Calculates (or uses provided) distances between all components
+\item For graphs with more than 2 components:
+\itemize{
+\item Creates a minimum spanning tree (MST) starting from component 1
+\item Uses the MST to determine the sequence of components to connect
+}
+\item For each component pair in the sequence:
+\itemize{
+\item Finds all vertex pairs within distance_threshold
+\item Creates bidirectional edges between these vertices
+\item Sets appropriate weights based on the weight profile
+}
+\item Updates component IDs in the final graph
+}
+
+The MST approach ensures that components are connected in a way that minimizes
+the total distance of connections while maintaining connectivity.
 }
 \examples{
-graph <- dodgr::weight_streetnet(dodgr::hampi)
-graph_connected <- connect_components(
-    graph,
-    distance_threshold = 200,
-    connection_type = "footway",
-    wt_profile = "foot",
-    surface = "paved"
-)
+\dontrun{
+library(dodgr)
+net <- weight_streetnet(hampi)
+
+# Connect components that are within 100 meters of each other
+connected_net <- connect_components(net, 
+                                  distance_threshold = 100,
+                                  connection_type = "footway",
+                                  wt_profile = "foot",
+                                  surface = "paved")
+                                  
+# Use pre-computed distance matrix
+dist_mat <- component_distances(net, distance_threshold = 100)
+connected_net <- connect_components(net,
+                                  distance_threshold = 100,
+                                  distance_matrix = dist_mat,
+                                  connection_type = "footway",
+                                  wt_profile = "foot",
+                                  surface = "paved")
+}
 }

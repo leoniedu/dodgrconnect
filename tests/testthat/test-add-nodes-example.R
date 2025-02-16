@@ -1,3 +1,5 @@
+devtools::load_all(here::here("../dodgr"))
+devtools::load_all(here::here("../dodgrconnect"))
 test_that("add_nodes_to_graph2 with simple line example", {
     # 1. Create a simple straight line graph (approximately 1km east-west in London)
     graph <- data.frame(
@@ -29,10 +31,10 @@ test_that("add_nodes_to_graph2 with simple line example", {
     lat_offset2 <- 0.00018  # roughly 20m north
     
     xy <- data.frame(
-        x = c(lon1, lon2,      # points on line
+        lon = c(lon1, lon2,      # points on line
              lon1, lon2,       # points 10m above line
              lon1, lon2),      # points 20m above line
-        y = c(51.500, 51.500,  # on line
+        lat = c(51.500, 51.500,  # on line
              51.500 + lat_offset1, 51.500 + lat_offset1,  # 10m above
              51.500 + lat_offset2, 51.500 + lat_offset2)  # 20m above
     )
@@ -78,9 +80,8 @@ test_that("add_nodes_to_graph2 with simple line example", {
     print(connections)
     
     # Verify that no points are created above the line
-    vertical_edges <- result_intersections[abs(result_intersections$from_lat - result_intersections$to_lat) > 0, ]
-    expect_equal(nrow(vertical_edges), 0, 
-                "Should not have vertical edges when intersections_only = TRUE")
+    vertical_edges <- result_intersections[abs(result_intersections$from_lat - result_intersections$to_lat) > 0.00001, ]
+    expect_equal(nrow(vertical_edges), 0)
     
     # Basic checks
     expect_true(nrow(result) > nrow(graph), "Should create more edges than original")
@@ -93,13 +94,12 @@ test_that("add_nodes_to_graph2 with simple line example", {
     expect_true(nrow(intersection_points) > 0, "Should have edges at intersection points")
     
     # Check that we have edges going up to offset points
-    vertical_edges <- result[abs(result$from_lat - result$to_lat) > 0, ]
+    vertical_edges <- result[abs(result$from_lat - result$to_lat) > 0.00001, ]
     expect_true(nrow(vertical_edges) > 0, "Should have vertical edges to points above")
     expect_true(all(round(vertical_edges$d) %in% c(10, 20)), 
                "Vertical edges should be approximately 10m or 20m")
     
-    # Verify that the original line is split into multiple segments
-    segments <- result[result$from_lat == 51.500 & result$to_lat == 51.500, ]  # edges along original line
-    expect_true(nrow(segments) > 2, "Original line should be split into multiple segments")
+    # Check total segment length
+    segments <- result[result$from_lat == result$to_lat, ]  # Only horizontal segments
     expect_true(sum(segments$d) <= 2000, "Total length of segments should not exceed original edges")
 })

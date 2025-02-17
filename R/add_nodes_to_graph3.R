@@ -29,14 +29,11 @@
 #' @param xy A `data.frame` or `matrix` of points to add. If a matrix, must have 2 columns
 #'        for lon and lat coordinates. If a data.frame, must include 'lon' and 'lat' columns.
 #'        Optionally can include 'id' column to specify vertex IDs.
-#' @param intersections_only If TRUE, only add nodes at intersections between
-#' edges, otherwise add all nodes
-#' @param new_edge_type Type of new edges to be added
 #' @param wt_profile Name of weight profile to use
 #' @param wt_profile_file Custom weight profile file
-#' @param surface Surface type for new edges
+#' @param new_edge_type Type of new edges to create (e.g. "footway")
 #' @param max_length Maximum length of new edges
-#' @param tolerance Tolerance for distance check (default: 1e-3)
+#' @param dist_tol Tolerance for distance check (default: 1e-6)
 #' @return A modified version of `graph`, with additional edges formed by
 #'         breaking previous edges at nearest perpendicular intersections with the
 #'         points, `xy`. When new_edge_type is specified, connecting edges use the
@@ -57,269 +54,286 @@
 #' )
 #'
 #' # Add points with inherited weights (like dodgr::add_nodes_to_graph)
-#' graph1 <- add_nodes_to_graph2(graph, xy)
+#' graph1 <- add_nodes_to_graph3(graph, xy)
 #'
 #' # Add points with custom footpath weights
-#' graph2 <- add_nodes_to_graph2(graph, xy,
+#' graph2 <- add_nodes_to_graph3(graph, xy,
 #'                              new_edge_type = "footway",
 #'                              wt_profile = "foot",
 #'                              surface = "paved")
 #' @export
-add_nodes_to_graph2 <- function (graph,
-                                 xy,
-                                 intersections_only = FALSE,
-                                 new_edge_type = NULL,
-                                 wt_profile = NULL,
-                                 wt_profile_file = NULL,
-                                 surface = NULL,
-                                 max_length = Inf,
-                                 tolerance = 1e-3) {
+add_nodes_to_graph3 <- function(graph,
+                                xy,
+                                wt_profile = NULL,
+                                wt_profile_file = NULL,
+                                new_edge_type = NULL,
+                                max_length = Inf,
+                                dist_tol = 1e-6) {
   
   # Validate tolerance
-  if (!is.numeric(tolerance) || tolerance < 0) {
-    stop("Tolerance must be a non-negative numeric value")
+  if (dist_tol <= 0) {
+    stop("Tolerance must be positive")
   }
   
-  # Convert max_length to units object if provided
-  if (!is.null(max_length)) {
-    max_length <- units::set_units(max_length, "m")
-  }
+  # Standardize column names at the start
+  gr_cols <- dodgr_graph_cols(graph)
+  gr_cols <- unlist(gr_cols[which(!is.na(gr_cols))])
+  graph_std <- graph[, gr_cols]  # standardise column names
+  names(graph_std) <- names(gr_cols)
   
-  # Get vertex IDs
-  has_vertex_ids <- "from_id" %in% names(graph)
-  if (has_vertex_ids) {
-    message("Has vertex IDs: TRUE")
-    vertex_ids <- unique(c(graph$from_id, graph$to_id))
-    n_vertex_ids <- length(vertex_ids)
-    message("Number of vertex IDs: ", n_vertex_ids)
+  # Save original column mapping
+  col_mapping <- setNames(gr_cols, names(gr_cols))
+  
+  # Process xy data
+  if ("id" %in% names(xy)) {
+    xy_id <- xy$id
   } else {
-    message("Has vertex IDs: FALSE")
-    message("Number of vertex IDs: 2")
+    xy_id <- NULL
   }
+  xy$id <- NULL
+  xy <- dodgr:::pre_process_xy(xy)
   
-  # Generate new vertex IDs for the points if needed
-  xyf <- data.frame(xy)
-  xy <- pre_process_xy(xy)
-  xyf <- xyf%>%select(-any_of(c("x", "y")))%>%bind_cols(xy)
-  if (!"id" %in% colnames(xyf)) {
-    xyf$id <- sapply(1:nrow(xy), function(i) {
-      paste0(sample(c(letters, LETTERS, 0:9), 10, replace=TRUE), collapse="")
-    })
+  # Add id column if not present
+  if (is.null(xy_id)) {
+    xy_id <- vapply(seq_len(nrow(xy)), 
+                    function(i) paste0(sample(c(letters, LETTERS, 0:9), 10, replace = TRUE), collapse = ""),
+                    character(1))
   }
+  xy$id <- xy_id
   
-  # Find closest edges for each point
-  message("Finding closest edges...")
-  closest_edges_0 <- dodgr::match_pts_to_graph(graph = graph, xy = xy, connected = FALSE, distances = TRUE)%>%mutate(xy_index=1:n())
-  closest_edges <- closest_edges_0%>%filter(abs(d_signed)<=as.numeric(max_length))
-  not_connected <- nrow(closest_edges_0)-nrow(closest_edges)
-  if (not_connected>0) {
+  xyf <- xy  # Keep original points
+  
+  # Match points to edges
+  closest_edges <- match_pts_to_graph(graph_std, xy[, c("x", "y")], distances = TRUE)
+  closest_edges$xy_index <- seq_len(nrow(closest_edges))
+  
+  # Check for unconnected points
+  not_connected <- sum(is.na(closest_edges$index))
+  if (not_connected > 0) {
     cli::cli_alert_warning("{not_connected} points not connected ")
   }
-  if(nrow(closest_edges)==0) {
+  
+  if (nrow(closest_edges) == 0) {
     return(graph)
   }
-  ## 
+  
+  # Update xy to only include connected points
   xy <- xy[closest_edges$xy_index,]
   xyf <- xyf[closest_edges$xy_index,]
-  # Create new edges connecting points to their closest edges
+  
+  # Initialize new edges dataframe
   new_edges <- data.frame()
+  
   for (i in seq_len(nrow(xy))) {
     edge_idx <- closest_edges$index[i]
     if (is.na(edge_idx)) next
-    edge <- graph[edge_idx, ]
+    
+    # Get the edge to split
+    edge <- graph_std[edge_idx,]
     point_x <- xy$x[i]
     point_y <- xy$y[i]
     point_id <- xyf$id[i]
     proj_x <- closest_edges$x[i]
     proj_y <- closest_edges$y[i]
-    # Create new vertex ID for projection point
-    proj_id <- paste0(sample(c(letters, LETTERS, 0:9), 10, replace=TRUE), collapse="")
     
-    # Create edge from point to projection
-    new_edge <- edge
-    new_edge$edge_id <- paste0("new_", i)
-    new_edge$from_id <- point_id
-    new_edge$from_lon <- point_x
-    new_edge$from_lat <- point_y
-    new_edge$to_id <- proj_id
-    new_edge$to_lon <- proj_x
-    new_edge$to_lat <- proj_y
-    new_edge$d <- abs(closest_edges$d_signed[i])
-    if (!is.null(wt_profile)) {
-      # Get weight profile
-      wp <- dodgr:::get_profile(wt_profile, wt_profile_file)
-      way_wt <- wp$value[wp$way == new_edge_type]
-      if (length(way_wt) == 0) {
-        stop(sprintf("No weight found for highway type '%s' in profile '%s'", 
-                   new_edge_type, wt_profile))
-      }
+    # Create new vertex ID for projection point
+    proj_id <- genhash(10L)
+    
+    # First split the original edge into two parts (bidirectional)
+    edge_split <- edge[rep(1, 2),]  # Create 2 edges for split
+    
+    # First direction
+    edge_split$to[1] <- proj_id  # from start to proj
+    edge_split$xto[1] <- proj_x
+    edge_split$yto[1] <- proj_y
+    edge_split$from[2] <- proj_id  # from proj to end
+    edge_split$xfr[2] <- proj_x
+    edge_split$yfr[2] <- proj_y
+    edge_split$xto[2] <- edge$xto
+    edge_split$yto[2] <- edge$yto
+    edge_split$to[2] <- edge$to
+    
+    # Calculate distances using geodist for consistency with dodgr
+    xy_i <- data.frame(
+      x = as.numeric(c(edge_split[1, "xfr"], edge_split[1, "xto"], edge_split[2, "xto"])),
+      y = as.numeric(c(edge_split[1, "yfr"], edge_split[1, "yto"], edge_split[2, "yto"]))
+    )
+    dmat <- geodist::geodist(xy_i, measure = "geodesic")
+    
+    # Calculate proportional weights from original edge
+    d_wt <- edge$d_weighted / edge$d
+    
+    # Check if point is very close to vertex (like dodgr)
+    if (any(dmat[upper.tri(dmat)] < dist_tol)) {
+      edge_split <- edge[1,, drop = FALSE]  # Single edge for close points
+      edge_split_rev <- edge_split
       
-      # Calculate weights
-      new_edge$highway <- new_edge_type
-      new_edge$d_weighted <- new_edge$d / way_wt
-      new_edge <- dodgr:::set_maxspeed(new_edge, wt_profile, wt_profile_file) |>
+      # Create reverse edge
+      edge_split_rev$from <- edge_split$to
+      edge_split_rev$to <- edge_split$from
+      edge_split_rev$xfr <- edge_split$xto
+      edge_split_rev$xto <- edge_split$xfr
+      edge_split_rev$yfr <- edge_split$yto
+      edge_split_rev$yto <- edge_split$yfr
+      
+      edge_split <- rbind(edge_split, edge_split_rev)
+      
+      # Determine which end is closer
+      d_i_min <- c(1, 1, 2)[which.min(dmat[upper.tri(dmat)])]
+      if (d_i_min == 1) {
+        edge_split <- edge_split[2:1,]
+      }
+    } else {
+      # Update distances and weights for split edges
+      edge_split$d[1] <- dmat[1, 2]
+      edge_split$d[2] <- dmat[2, 3]
+      
+      if (is.null(new_edge_type)) {
+        # Use proportional weights from original edge
+        edge_split$d_weighted <- edge_split$d * d_wt
+        edge_split$time <- edge_split$d * (edge$time / edge$d)
+        edge_split$time_weighted <- edge_split$d * (edge$time_weighted / edge$d)
+        
+        # Preserve other properties from original edge
+        edge_split$highway <- edge$highway
+        edge_split$maxspeed <- edge$maxspeed
+        edge_split$lanes <- edge$lanes
+        
+        edge_split$edge_id <- paste0(edge_split$edge_id, "_", LETTERS[1:2])
+      } else {
+        # Use new edge type weights
+        edge_split$highway <- new_edge_type
+        
+        wt_profile_df <- if (!is.null(wt_profile_file)) {
+          read.csv(wt_profile_file)
+        } else {
+          weight_profiles[[wt_profile]]
+        }
+        
+        wt_multiplier <- wt_profile_df$value[wt_profile_df$highway == new_edge_type]
+        if (length(wt_multiplier) == 0) {
+          cli::cli_alert_warning("Edge type {new_edge_type} not found in weight profile, using 1")
+          wt_multiplier <- 1
+        }
+        
+        edge_split$d_weighted <- edge_split$d * wt_multiplier
+        edge_split <- dodgr:::set_maxspeed(edge_split, wt_profile, wt_profile_file) |>
+          dodgr:::weight_by_num_lanes(wt_profile) |>
+          dodgr:::calc_edge_time(wt_profile)
+        
+        # Check for NAs in time calculations
+        if (any(is.na(edge_split$time)) || any(is.na(edge_split$time_weighted))) {
+          cli::cli_alert_warning("NAs found in time calculations for edge_split")
+          print(edge_split[c("d", "d_weighted", "time", "time_weighted")])
+        }
+        
+        edge_split$edge_id <- paste0(edge_split$edge_id, "_", LETTERS[1:2])
+      }
+    }
+    
+    # Calculate distance to new point using geodist
+    d_i <- geodist::geodist(
+      data.frame(x = point_x, y = point_y),
+      data.frame(x = proj_x, y = proj_y),
+      measure = "geodesic"
+    )
+    d_i <- as.numeric(d_i[1, 1])
+    
+    # Create edges to the new point (both directions)
+    edge_new <- edge_split[c(1,1),]  # Create two new edges for bidirectional
+    
+    # Update endpoints for new edges
+    edge_new$from[1] <- point_id
+    edge_new$to[1] <- proj_id
+    edge_new$from[2] <- proj_id
+    edge_new$to[2] <- point_id
+    
+    # Update coordinates
+    edge_new$xfr[1] <- point_x
+    edge_new$yfr[1] <- point_y
+    edge_new$xto[1] <- proj_x
+    edge_new$yto[1] <- proj_y
+    
+    edge_new$xfr[2] <- proj_x
+    edge_new$yfr[2] <- proj_y
+    edge_new$xto[2] <- point_x
+    edge_new$yto[2] <- point_y
+    
+    # Update distances and weights for new edges
+    edge_new$d <- d_i
+    
+    if (is.null(new_edge_type)) {
+      # Use proportional weights from original edge
+      edge_new$d_weighted <- d_i * d_wt
+      edge_new$time <- d_i * (edge$time / edge$d)
+      edge_new$time_weighted <- d_i * (edge$time_weighted / edge$d)
+      
+      # Preserve other properties from original edge
+      edge_new$highway <- edge$highway
+      edge_new$maxspeed <- edge$maxspeed
+      edge_new$lanes <- edge$lanes
+      
+      edge_new$edge_id <- vapply(seq_len(nrow(edge_new)),
+                              function(i) genhash(10),
+                              character(1L))
+    } else {
+      # Use new edge type weights
+      edge_new$highway <- new_edge_type
+      wt_multiplier <- wt_profile_df$value[wt_profile_df$highway == new_edge_type]
+      if (length(wt_multiplier) == 0) {
+        cli::cli_alert_warning("Edge type {new_edge_type} not found in weight profile, using 1")
+        wt_multiplier <- 1
+      }
+      edge_new$d_weighted <- d_i * wt_multiplier
+      edge_new <- dodgr:::set_maxspeed(edge_new, wt_profile, wt_profile_file) |>
         dodgr:::weight_by_num_lanes(wt_profile) |>
         dodgr:::calc_edge_time(wt_profile)
-    } else {
-      new_edge$d_weighted <- new_edge$d * (edge$d_weighted / edge$d)
-      new_edge$time <- new_edge$d * (edge$time / edge$d)
-      new_edge$time_weighted <- new_edge$d * (edge$time_weighted / edge$d)
+        
+      # Check for NAs in time calculations
+      if (any(is.na(edge_new$time)) || any(is.na(edge_new$time_weighted))) {
+        cli::cli_alert_warning("NAs found in time calculations for edge_new")
+        print(edge_new[c("d", "d_weighted", "time", "time_weighted")])
+      }
+        
+      edge_new$edge_id <- vapply(seq_len(nrow(edge_new)),
+                              function(i) genhash(10),
+                              character(1L))
     }
     
-    # Create reverse edge
-    rev_edge <- new_edge
-    rev_edge$edge_id <- paste0(new_edge$edge_id, "_rev")
-    rev_edge$from_id <- new_edge$to_id
-    rev_edge$from_lon <- new_edge$to_lon
-    rev_edge$from_lat <- new_edge$to_lat
-    rev_edge$to_id <- new_edge$from_id
-    rev_edge$to_lon <- new_edge$from_lon
-    rev_edge$to_lat <- new_edge$from_lat
+    # Combine split and new edges
+    edges_i <- rbind(edge_split, edge_new)
     
-    # Add edges to result
-    new_edges <- rbind(new_edges, new_edge, rev_edge)
-    
-    # Split the original edge at the projection point
-    edge1 <- edge
-    edge1$edge_id <- paste0(edge$edge_id, "_split1_", i)
-    edge1$to_id <- proj_id
-    edge1$to_lon <- proj_x
-    edge1$to_lat <- proj_y
-    edge1$d <- as.numeric(units::set_units(
-      geodist::geodist(
-        matrix(c(edge1$from_lon, edge1$from_lat), ncol = 2, dimnames=list(NULL, c("x", "y"))),
-        matrix(c(edge1$to_lon, edge1$to_lat), ncol = 2, dimnames=list(NULL, c("x", "y"))),
-        measure = "geodesic"
-      )[1,1],
-      "m"
-    ))
-    edge1$d_weighted <- edge1$d * (edge$d_weighted / edge$d)
-    edge1$time <- edge1$d * (edge$time / edge$d)
-    edge1$time_weighted <- edge1$d * (edge$time_weighted / edge$d)
-    
-    edge2 <- edge
-    edge2$edge_id <- paste0(edge$edge_id, "_split2_", i)
-    edge2$from_id <- proj_id
-    edge2$from_lon <- proj_x
-    edge2$from_lat <- proj_y
-    edge2$d <- as.numeric(units::set_units(
-      geodist::geodist(
-        matrix(c(edge2$from_lon, edge2$from_lat), ncol = 2, dimnames=list(NULL, c("x", "y"))),
-        matrix(c(edge2$to_lon, edge2$to_lat), ncol = 2, dimnames=list(NULL, c("x", "y"))),
-        measure = "geodesic"
-      )[1,1],
-      "m"
-    ))
-    edge2$d_weighted <- edge2$d * (edge$d_weighted / edge$d)
-    edge2$time <- edge2$d * (edge$time / edge$d)
-    edge2$time_weighted <- edge2$d * (edge$time_weighted / edge$d)
-    
-    # Add split edges to result
-    new_edges <- bind_rows(new_edges, edge1, edge2)
+    # Combine all edges
+    #cli::cli_inform("{i}: {nrow(edges_i)} new edges")
+    new_edges <- rbind(new_edges, edges_i)
   }
   
-  # Remove original edges that were split and add new edges
-  graph$edge_id <- as.character(graph$edge_id)
-  result <- bind_rows(
-      graph[-closest_edges$index,],  # Keep edges that weren't split
-      new_edges                      # Add new edges
-  )
+  # NOTE: Currently we only remove the original edges in one direction, not their reverse edges.
+  # This doesn't affect distance calculations since the reverse edges will just be unused,
+  # but in a future update we may want to remove both directions for cleaner output.
+  # To remove reverse edges, we'd need to:
+  # 1. Find edges with swapped from/to and matching coordinates
+  # 2. Remove both the original and reverse edges
   
-  # Ensure result has same columns as input graph
-  missing_cols <- setdiff(names(graph), names(result))
-  if (length(missing_cols) > 0) {
-    for (col in missing_cols) {
-      result[[col]] <- NA
-    }
+  # Combine original graph (excluding split edges) with new edges
+  result <- graph_std[-closest_edges$index[!is.na(closest_edges$index)],]
+  
+  # Convert new_edges back to original column names
+  new_edges_orig <- new_edges
+  
+  # Combine with new edges
+  result <- rbind(result, new_edges_orig)
+  
+  # Convert result back to original column names
+  result_orig <- graph[0,]  # Empty template with original column names
+  result_orig[seq_len(nrow(result)), ] <- NA  # Expand to correct size
+  for (g in seq_along(gr_cols)) {
+    result_orig[, col_mapping[g]] <- result[[names(gr_cols)[g]]]
   }
   
-  result <- result[, intersect(names(graph), names(result))]
-  return(result)
+  return(result_orig)
 }
 
-# find_points_on_edge <- function(from_lon, from_lat, to_lon, to_lat,
-#                                points_x, points_y, dist_tol = 1e-6) {
-#   # Convert points to matrix format
-#   points_mat <- matrix(c(points_x, points_y), ncol = 2)
-#   start_mat <- matrix(c(from_lon, from_lat), nrow = 1)
-#   end_mat <- matrix(c(to_lon, to_lat), nrow = 1)
-#   
-#   # Calculate edge vector
-#   edge_vec <- c(to_lon - from_lon, to_lat - from_lat)
-#   edge_length_sq <- sum(edge_vec^2)
-#   
-#   # If edge has zero length, return empty result
-#   if (edge_length_sq < 1e-12) {
-#     return(data.frame(x = numeric(0), y = numeric(0), dist = numeric(0), merge = logical(0)))
-#   }
-#   
-#   # Calculate edge length in meters using geodist
-#   edge_df <- data.frame(x = c(from_lon, to_lon), y = c(from_lat, to_lat))
-#   edge_length_m <- as.numeric(geodist::geodist(edge_df, measure = "geodesic")[1,2])
-#   
-#   # For each point, calculate projection onto line
-#   n_points <- length(points_x)
-#   on_edge <- logical(n_points)
-#   distances <- numeric(n_points)
-#   merge_points <- logical(n_points)
-#   
-#   for (i in seq_len(n_points)) {
-#     # Vector from edge start to point
-#     point_vec <- c(points_x[i] - from_lon, points_y[i] - from_lat)
-#     
-#     # Calculate projection onto edge
-#     t <- sum(point_vec * edge_vec) / edge_length_sq
-#     
-#     # Calculate nearest point based on projection parameter t
-#     if (t < 0) {
-#       # Point projects before start of edge, use start point
-#       nearest_x <- from_lon
-#       nearest_y <- from_lat
-#       t_clamped <- 0
-#     } else if (t > 1) {
-#       # Point projects after end of edge, use end point
-#       nearest_x <- to_lon
-#       nearest_y <- to_lat
-#       t_clamped <- 1
-#     } else {
-#       # Point projects onto edge, calculate projected point
-#       nearest_x <- from_lon + t * edge_vec[1]
-#       nearest_y <- from_lat + t * edge_vec[2]
-#       t_clamped <- t
-#     }
-#     
-#     # Calculate distance using geodist
-#     point_df <- data.frame(
-#       x = c(points_x[i], nearest_x),
-#       y = c(points_y[i], nearest_y)
-#     )
-#     dist_m <- as.numeric(geodist::geodist(point_df, measure = "geodesic")[1,2])
-#     
-#     # Print debug info
-#     message(sprintf("Point %d: (%g,%g)", i, points_x[i], points_y[i]))
-#     message(sprintf("  Vector to point: %g, %g", point_vec[1], point_vec[2]))
-#     message(sprintf("  Projection parameter t: %g", t))
-#     message(sprintf("  Projected point: (%g,%g)", nearest_x, nearest_y))
-#     message(sprintf("  Perpendicular distance (m): %g", dist_m))
-#     message(sprintf("  Edge length (m): %g", edge_length_m))
-#     
-#     # Always include the point, but mark for merging if very close
-#     on_edge[i] <- TRUE
-#     distances[i] <- t_clamped
-#     merge_points[i] <- dist_m < dist_tol
-#     
-#     if (merge_points[i]) {
-#       message("  Point will be merged (distance < tolerance)")
-#     } else {
-#       message("  Point will get separate edges")
-#     }
-#   }
-#   
-#   # Return points that are on the edge
-#   return(data.frame(
-#     x = points_x[on_edge],
-#     y = points_y[on_edge],
-#     dist = distances[on_edge],
-#     merge = merge_points[on_edge]
-#   ))
-# }
+genhash <- function (len = 10) {
+  paste0(sample(c(0:9, letters, LETTERS), size = len), collapse = "")
+}

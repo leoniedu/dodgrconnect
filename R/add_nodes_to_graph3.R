@@ -305,33 +305,27 @@ add_nodes_to_graph3 <- function(graph,
     
     # Combine all edges
     #cli::cli_inform("{i}: {nrow(edges_i)} new edges")
+    edges_i$graph_orig_idx <- edge_idx
     new_edges <- rbind(new_edges, edges_i)
   }
   
-  # NOTE: Currently we only remove the original edges in one direction, not their reverse edges.
-  # This doesn't affect distance calculations since the reverse edges will just be unused,
-  # but in a future update we may want to remove both directions for cleaner output.
-  # To remove reverse edges, we'd need to:
-  # 1. Find edges with swapped from/to and matching coordinates
-  # 2. Remove both the original and reverse edges
-  
-  # Combine original graph (excluding split edges) with new edges
-  result <- graph_std[-closest_edges$index[!is.na(closest_edges$index)],]
-  
-  # Convert new_edges back to original column names
-  new_edges_orig <- new_edges
-  
-  # Combine with new edges
-  result <- rbind(result, new_edges_orig)
-  
-  # Convert result back to original column names
-  result_orig <- graph[0,]  # Empty template with original column names
-  result_orig[seq_len(nrow(result)), ] <- NA  # Expand to correct size
+
+  result_orig <- graph[-closest_edges$index[!is.na(closest_edges$index)],]
+  result_new <- graph[new_edges$graph_orig_idx,]
+  # Update only the standardized columns
   for (g in seq_along(gr_cols)) {
-    result_orig[, col_mapping[g]] <- result[[names(gr_cols)[g]]]
+    col_std <- names(gr_cols)[g]
+    orig_col <- col_mapping[g]
+    if (col_std %in% names(new_edges) && nrow(new_edges) > 0) {
+      result_new[, orig_col] <- new_edges[, col_std]
+    }
   }
-  
-  return(result_orig)
+  if (is.character(result_new$edge_id)) {
+    result_orig$edge_id <- as.character(result_orig$edge_id)
+  }
+  result_final <- dplyr::bind_rows(result_orig, result_new)
+  # Return the final result
+  return(result_final)
 }
 
 genhash <- function (len = 10) {

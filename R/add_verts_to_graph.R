@@ -44,7 +44,7 @@
 #' @export
 add_verts_to_graph <- function(graph,
                                 xy,
-                                bidirectional = FALSE) {
+                                bidirectional = TRUE) {
   
   stopifnot(nrow(xy)>0)
   

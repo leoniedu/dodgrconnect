@@ -1,66 +1,49 @@
-#' Insert new nodes into a graph with custom edge weights
+#' Add nodes to graph with deterministic edge-based processing
 #'
-#' This function extends `dodgr::add_nodes_to_graph` by adding the ability to specify
-#' custom weights for new edges. While the original function inherits weights from
-#' parent edges, this version allows customization through weight profiles.
+#' Enhanced version that processes points per edge to maintain graph consistency,
+#' with improved weight profile handling and edge type validation.
 #'
-#' This inserts new nodes by extending lines from each input point to the edge
-#' with the closest point of perpendicular intersection. That edge is then split
-#' at that point of intersection, creating two new edges (or four for directed
-#' edges). If `intersections_only = FALSE` (default), then additional edges are
-#' inserted from those intersection points to the input points. If
-#' `intersections_only = TRUE`, then nodes are added by splitting graph edges at
-#' points of nearest perpendicular intersection, without adding additional edges
-#' out to the actual input points.
+#' @inheritParams dodgr::add_nodes_to_graph
+#' @param wt_profile Weight profile name (e.g., "foot", "bicycle"). Required if 
+#'        using `new_edge_type`.
+#' @param wt_profile_file Optional path to custom weight profile CSV file. Uses
+#'        `dodgr:::get_profile()` for loading instead of base `read.csv`.
+#' @param new_edge_type Type for new connection edges (e.g., "footway"). Applies 
+#'        *only* to new edges connecting points to the graph, not split edges.
+#'        Must exist in specified weight profile.
+#' @param intersections_only Logical indicating whether to skip component ID
+#'        assignment for faster intermediate processing.
 #'
-#' In the former case, the properties of those new edges, such as distance and
-#' time weightings, are inherited from the edges which are intersected, and may
-#' need to be manually modified after calling this function.
+#' @return Modified graph with:
+#' - Original edges split at projection points
+#' - New edges connecting input points to graph
+#' - Updated component IDs (unless `intersections_only = TRUE`)
+#' - Consistent vertex IDs based on coordinate hashing
 #'
-#' @section Key Differences from dodgr::add_nodes_to_graph:
-#' While the original function inherits all weights from parent edges, this version:
-#' - Allows specifying custom highway types for new connecting edges
-#' - Supports weight profile calculations for the new edges
-#' - Enables custom surface types
-#' - Falls back to inherited weights if no custom weights are specified
-#' - Optionally accepts vertex IDs in the xy data frame
-#'
-#' @param graph A `data.frame` or `dodgr_streetnet` containing the graph edges
-#' @param xy A `data.frame` or `matrix` of points to add. If a matrix, must have 2 columns
-#'        for lon and lat coordinates. If a data.frame, must include 'lon' and 'lat' columns.
-#'        Optionally can include 'id' column to specify vertex IDs.
-#' @param wt_profile Name of weight profile to use
-#' @param wt_profile_file Custom weight profile file
-#' @param new_edge_type Type of new edges to create (e.g. "footway")
-#' @param max_length Maximum length of new edges
-#' @param dist_tol Tolerance for distance check (default: 1e-6)
-#' @return A modified version of `graph`, with additional edges formed by
-#'         breaking previous edges at nearest perpendicular intersections with the
-#'         points, `xy`. When new_edge_type is specified, connecting edges use the
-#'         specified weights and profiles.
+#' @details Key features:
+#' - Processes all points per edge together for topological consistency
+#' - Maintains original edge properties on split segments
+#' - Validates `new_edge_type` against weight profile contents
+#' - Uses geodist for accurate distance calculations
+#' - Generates deterministic vertex IDs based on edge positions
 #'
 #' @examples
-#' library(dodgr)
-#' graph <- weight_streetnet(hampi, wt_profile = "foot")
-#' dim(graph)
+#' # Basic usage with default weight profile
+#' hw <- dodgr::weight_streetnet(dodgr::dodgr_streetnet("hampi"))
+#' xy <- data.frame(x = 76.4, y = 15.3)
+#' net <- add_nodes_to_graph5(hw, xy)
 #'
-#' verts <- dodgr_vertices(graph)
-#' set.seed(2)
-#' npts <- 10
-#' xy <- data.frame(
-#'     lon = min(verts$lon) + runif(npts) * diff(range(verts$lon)),
-#'     lat = min(verts$lat) + runif(npts) * diff(range(verts$lat)),
-#'     id = paste0("new_", 1:npts)  # Optional vertex IDs
-#' )
+#' # With custom edge type validation
+#' net <- add_nodes_to_graph5(hw, xy, 
+#'                           wt_profile = "foot",
+#'                           new_edge_type = "path")
 #'
-#' # Add points with inherited weights (like dodgr::add_nodes_to_graph)
-#' graph1 <- add_nodes_to_graph3(graph, xy)
+#' # Using custom weight profile file
+#' net <- add_nodes_to_graph5(hw, xy,
+#'                           wt_profile_file = "custom_weights.csv",
+#'                           new_edge_type = "custom_type")
 #'
-#' # Add points with custom footpath weights
-#' graph2 <- add_nodes_to_graph3(graph, xy,
-#'                              new_edge_type = "footway",
-#'                              wt_profile = "foot",
-#'                              surface = "paved")
+#' @seealso [dodgr::add_nodes_to_graph()] for base implementation
 #' @export
 add_nodes_to_graph5 <- function(graph,
                                 xy,
@@ -144,11 +127,34 @@ add_nodes_to_graph5 <- function(graph,
     if (is.na(edge_idx)) next
     # Get the edge to split
     edge <- graph_std[edge_idx,]
+    if (edge$d==0) next
     closest_edge <- closest_edges|>dplyr::filter(index==edge_idx)
+    projection_points <- closest_edge|>distinct(x,y,d_vert, .keep_all = TRUE)
+    edge_dif <- edge
+    edge_new <- edge
+    for (i in seq_len(nrow(projection_points))) {
+      edge_new <- dodgr::dodgr_insert_vertex(
+        graph = edge_new,
+        v1 = edge_dif$from,
+        v2 = edge_dif$to,
+        x=projection_points$x[i],
+        y=projection_points$y[i]
+      )
+      edge_dif <- edge_new%>%anti_join(edge)%>%slice(2)
+    }
     xy_edge <- xy[closest_edge$xy_index,]
     xyf_edge <- xyf[closest_edge$xy_index,]
     graph_edge <- graph_std[edge_idx,]
     projection_points <- closest_edge|>distinct(x,y,d_vert)
+    for (i in seq_len(nrow(projection_points))) {
+      graph_modified <- dodgr::dodgr_insert_vertex(
+        graph = graph_modified,
+        v1 = current_edge$to_id,
+        v2 = current_edge$from_id
+      )
+    }
+    
+    
     ## we will first split the original edge along the unique projection points
     edge_split <- graph_edge[rep(1, nrow(projection_points)+1),]  # Create nrow(xy)+1 edges for split
     ## do the first split
@@ -157,9 +163,7 @@ add_nodes_to_graph5 <- function(graph,
     edge_split$xto[i] <- projection_points$x[i]
     edge_split$yto[i] <- projection_points$y[i]
     edge_split$d[i] <- projection_points$d_vert[i]
-    if (edge_split$d[i]<0) edge_split$d[i] <- 0
     frac_d <- edge_split$d[i]/edge$d
-    if (edge$d==0) frac_d <- 0
     edge_split$d_weighted[i] <- edge_split$d_weighted[i]*frac_d
     edge_split$time[i] <- edge$time*frac_d
     edge_split$time_weighted[i] <- edge$time_weighted[i]*frac_d
@@ -175,9 +179,7 @@ add_nodes_to_graph5 <- function(graph,
         edge_split$yto[i] <- projection_points$y[i]
         edge_split$to[i] <- closest_edge$proj_id[i]
         edge_split$d[i] <- projection_points$d_vert[i]-projection_points$d_vert[i-1]
-        if (edge_split$d[i]<0) edge_split$d[i] <- 0
         frac_d <- edge_split$d[i]/edge$d
-        if (edge$d==0) frac_d <- 0
         edge_split$d_weighted[i] <- edge_split$d_weighted[i]*frac_d
         edge_split$time[i] <- edge_split$time[i]*frac_d
         edge_split$time_weighted[i] <- edge_split$time_weighted[i]*frac_d
@@ -194,7 +196,6 @@ add_nodes_to_graph5 <- function(graph,
     edge_split$d[i] <- edge$d-max(projection_points$d_vert)
     if (edge_split$d[i]<0) edge_split$d[i] <- 0
     frac_d <- edge_split$d[i]/edge$d
-    if (edge$d==0) frac_d <- 0
     edge_split$d_weighted[i] <- edge_split$d_weighted[i]*frac_d
     edge_split$time[i] <- edge_split$time[i]*frac_d
     edge_split$time_weighted[i] <- edge_split$time_weighted[i]*frac_d

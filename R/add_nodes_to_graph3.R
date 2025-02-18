@@ -107,6 +107,9 @@ add_nodes_to_graph3 <- function(graph,
   
   # Match points to edges
   closest_edges <- match_pts_to_graph(graph_std, xy[, c("x", "y")], distances = TRUE)
+  # closest_edges <- closest_edges|>
+  #   dplyr::group_by(index)|>
+  #   mutate(edge_index=order(-abs(d_signed)), index=if_else(edge_index>1, NA, index))
   closest_edges$xy_index <- seq_len(nrow(closest_edges))
   
   # Check for unconnected points

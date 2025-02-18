@@ -99,6 +99,10 @@ add_nodes_to_graph2 <- function (graph,
   
   # Generate new vertex IDs for the points if needed
   xyf <- data.frame(xy)
+  if ("id" %in% colnames(xyf)) {
+    xy_id <- xyf$id
+    xy$id <- NULL
+  }
   xy <- pre_process_xy(xy)
   xyf <- xyf%>%select(-any_of(c("x", "y")))%>%bind_cols(xy)
   if (!"id" %in% colnames(xyf)) {

@@ -34,7 +34,7 @@
 #'
 #' # Add points by splitting edges (unidirectional)
 #' pts <- data.frame(x = c(76.4, 76.5), y = c(15.3, 15.4))
-#' net_split <- add_verts_to_graph(net, pts)
+#' net_split <- add_verts_to_graph(net, pts, bidirectional = FALSE)
 #'
 #' # Add points with bidirectional edges
 #' net_split_bidir <- add_verts_to_graph(net, pts, bidirectional = TRUE)

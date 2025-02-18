@@ -2,23 +2,27 @@
 #'
 #' Projects points onto the nearest edges in the graph and splits those edges at
 #' the projection points. This maintains the network topology by creating new
-#' vertices where points project onto existing edges.
+#' vertices where points project onto existing edges. Each edge is split at the
+#' projection point and new edges are created to maintain connectivity.
 #'
 #' @inheritParams dodgr::add_nodes_to_graph
 #' @param graph A dodgr graph to modify
-#' @param xy Matrix or data.frame of x-y coordinates of points to add
+#' @param xy Matrix or data.frame of x-y coordinates of points to add. If points
+#'        have an 'id' column, these IDs will be preserved, otherwise new IDs
+#'        will be generated.
 #'
 #' @return Modified graph with:
 #'   - New vertices at projection points
 #'   - Original edges split at projection points
-#'   - New edges connecting input points to projection points
+#'   - All edge attributes preserved and properly weighted
 #'
 #' @details
 #' This function:
-#' 1. Projects each point onto its nearest edge
+#' 1. Projects each point onto its nearest edge using match_pts_to_graph
 #' 2. Creates new vertices at projection points
 #' 3. Splits existing edges at these points
-#' 4. Maintains all original edge attributes
+#' 4. Maintains all original edge attributes and weights
+#' 5. Preserves existing point IDs or generates new ones if not provided
 #'
 #' @examples
 #' # Create sample network
@@ -28,18 +32,19 @@
 #' pts <- data.frame(x = c(76.4, 76.5), y = c(15.3, 15.4))
 #' net_split <- add_verts_to_graph(net, pts)
 #'
+#' # Add points with custom IDs
+#' pts_with_ids <- data.frame(
+#'   x = c(76.4, 76.5),
+#'   y = c(15.3, 15.4),
+#'   id = c("A", "B")
+#' )
+#' net_split <- add_verts_to_graph(net, pts_with_ids)
+#'
 #' @seealso
 #' [add_edges_to_graph()] for creating direct edges to vertices
 #' @export
 add_verts_to_graph <- function(graph,
-                                xy,
-                                max_length = Inf,
-                                dist_tol = 1e-6) {
-  
-  # Validate tolerance
-  if (dist_tol < 0) {
-    stop("Tolerance must be non-negative")
-  }
+                                xy) {
   
   stopifnot(nrow(xy)>0)
   
@@ -68,9 +73,6 @@ add_verts_to_graph <- function(graph,
                     character(1))
   }
   xy$id <- xy_id
-  
-  xyf <- xy  # Keep original points
-  
   # Match points to edges
   closest_edges <- match_pts_to_graph(graph_std, xy[, c("x", "y")], distances = TRUE)
   # closest_edges <- closest_edges|>
@@ -81,12 +83,9 @@ add_verts_to_graph <- function(graph,
   closest_edges$yfr <- graph_std$yfr[closest_edges$index]
   closest_edges$xpt <- xy$x
   closest_edges$ypt <- xy$y
-  ## distance between projection point and the from vertice
+  # ## distance between projection point and the from vertice
   closest_edges$d_vert <- with(closest_edges,geodist::geodist(x=cbind(x,y), y=cbind(xfr,yfr), paired = TRUE, measure = "geodesic"))
-  closest_edges$d_pt <- with(closest_edges,geodist::geodist(x=cbind(x,y), y=cbind(xpt,ypt), paired = TRUE, measure = "geodesic"))
-  closest_edges$pt_id <- xyf$id
   closest_edges$edge_id <- graph_std$edge_id[closest_edges$index]
-  closest_edges$proj_id <- replicate(nrow(closest_edges),genhash(10))
   closest_edges <- closest_edges|>dplyr::arrange(index,d_vert)
   
   # Check for unconnected points
@@ -101,7 +100,6 @@ add_verts_to_graph <- function(graph,
   
   # Update xy to only include connected points
   xy <- xy[closest_edges$xy_index,]
-  xyf <- xyf[closest_edges$xy_index,]
   
   # Initialize new edges dataframe
   new_edges <- data.frame()

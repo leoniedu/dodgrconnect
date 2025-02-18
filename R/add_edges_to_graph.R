@@ -2,13 +2,16 @@
 #'
 #' Creates new edges connecting input points directly to their nearest vertices
 #' in the graph. Unlike [add_verts_to_graph()], this does not split existing edges
-#' but creates direct connections to existing vertices.
+#' but creates direct connections to existing vertices. New edges are created with
+#' specified highway type and weighted according to the weight profile.
 #'
 #' @inheritParams dodgr::add_nodes_to_graph
 #' @param graph A dodgr graph to modify
-#' @param xy Matrix or data.frame of x-y coordinates of points to add
+#' @param xy Matrix or data.frame of x-y coordinates of points to add. If points
+#'        have an 'id' column, these IDs will be preserved, otherwise new IDs
+#'        will be generated.
 #' @param wt_profile Name of weight profile (e.g., "foot", "bicycle", "motorcar")
-#' @param wt_profile_file Path to custom weight profile JSON file
+#' @param wt_profile_file Path to custom weight profile file
 #' @param highway Type of highway for new edges (must exist in weight profile)
 #' @param max_length Maximum allowed connection distance in meters (Inf = no limit)
 #'
@@ -19,13 +22,13 @@
 #' @details
 #' This function:
 #' 1. Finds nearest vertices using [dodgr::match_points_to_verts()]
-#' 2. Creates direct edges to these vertices if within max_length
+#' 2. Creates direct bidirectional edges to these vertices
 #' 3. Applies weights based on specified profile and highway type
-#' 4. Creates bidirectional connections automatically
+#' 4. Preserves existing point IDs or generates new ones if not provided
 #'
 #' Weight profiles can be:
 #' - Built-in dodgr profiles ("foot", "bicycle", "motorcar")
-#' - Custom profiles from JSON file
+#' - Custom profiles from file
 #'
 #' @examples
 #' # Create sample network

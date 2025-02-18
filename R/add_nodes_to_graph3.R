@@ -171,7 +171,18 @@ add_nodes_to_graph3 <- function(graph,
       edge_split <- edge[1,, drop = FALSE]  # Single edge for close points
       edge_split_rev <- edge_split
       
-      # Create reverse edge
+      # Determine which end is closer
+      d_i_min <- c(1, 1, 2)[which.min(dmat[upper.tri(dmat)])]
+      
+      if (d_i_min == 1) {
+        # Point is closer to 'from' vertex - use its ID
+        point_id <- edge_split$from
+      } else {
+        # Point is closer to 'to' vertex - use its ID
+        point_id <- edge_split$to
+      }
+      
+      # Create reverse edge preserving original IDs
       edge_split_rev$from <- edge_split$to
       edge_split_rev$to <- edge_split$from
       edge_split_rev$xfr <- edge_split$xto
@@ -181,10 +192,8 @@ add_nodes_to_graph3 <- function(graph,
       
       edge_split <- rbind(edge_split, edge_split_rev)
       
-      # Determine which end is closer
-      d_i_min <- c(1, 1, 2)[which.min(dmat[upper.tri(dmat)])]
       if (d_i_min == 1) {
-        edge_split <- edge_split[2:1,]
+        edge_split <- edge_split[2:1,]  # Reorder if needed
       }
     } else {
       # Update distances and weights for split edges
@@ -308,7 +317,8 @@ add_nodes_to_graph3 <- function(graph,
     edges_i$graph_orig_idx <- edge_idx
     new_edges <- rbind(new_edges, edges_i)
   }
-  
+  new_edges <- new_edges |>
+    dplyr::distinct(from, to, .keep_all = TRUE)
 
   result_orig <- graph[-closest_edges$index[!is.na(closest_edges$index)],]
   result_new <- graph[new_edges$graph_orig_idx,]

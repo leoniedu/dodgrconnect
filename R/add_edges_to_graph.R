@@ -1,8 +1,57 @@
-#' Add direct edges between points and nearest graph vertices
-#' 
+#' Add direct edges between points and nearest vertices
+#'
+#' Creates new edges connecting input points directly to their nearest vertices
+#' in the graph. Unlike [add_verts_to_graph()], this does not split existing edges
+#' but creates direct connections to existing vertices.
+#'
 #' @inheritParams dodgr::add_nodes_to_graph
+#' @param graph A dodgr graph to modify
+#' @param xy Matrix or data.frame of x-y coordinates of points to add
+#' @param wt_profile Name of weight profile (e.g., "foot", "bicycle", "motorcar")
+#' @param wt_profile_file Path to custom weight profile JSON file
 #' @param highway Type of highway for new edges (must exist in weight profile)
-#' @param max_length Maximum connection distance in meters
+#' @param max_length Maximum allowed connection distance in meters (Inf = no limit)
+#'
+#' @return Modified graph with new bidirectional edges connecting input points
+#'         to their nearest vertices. Edge weights and attributes are set according
+#'         to the specified weight profile and highway type.
+#'
+#' @details
+#' This function:
+#' 1. Finds nearest vertices using [dodgr::match_points_to_verts()]
+#' 2. Creates direct edges to these vertices if within max_length
+#' 3. Applies weights based on specified profile and highway type
+#' 4. Creates bidirectional connections automatically
+#'
+#' Weight profiles can be:
+#' - Built-in dodgr profiles ("foot", "bicycle", "motorcar")
+#' - Custom profiles from JSON file
+#'
+#' @examples
+#' # Create sample network
+#' net <- weight_streetnet(dodgr_streetnet("hampi india"))
+#'
+#' # Add points with residential street connections
+#' pts <- data.frame(x = c(76.4, 76.5), y = c(15.3, 15.4))
+#' net_connected <- add_edges_to_graph(
+#'   net,
+#'   pts,
+#'   wt_profile = "motorcar",
+#'   highway = "residential",
+#'   max_length = 1000  # Max 1km connections
+#' )
+#'
+#' # Using custom weight profile
+#' net_custom <- add_edges_to_graph(
+#'   net,
+#'   pts,
+#'   wt_profile_file = "path/to/profile.json",
+#'   highway = "custom_type"
+#' )
+#'
+#' @seealso
+#' [add_verts_to_graph()] for adding points by splitting edges
+#' [dodgr::match_points_to_verts()] for vertex matching details
 #' @export
 add_edges_to_graph <- function(graph,
                                xy,

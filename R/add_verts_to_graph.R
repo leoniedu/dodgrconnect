@@ -1,49 +1,35 @@
-#' Add nodes to graph with deterministic edge-based processing
+#' Add vertices to graph by splitting edges
 #'
-#' Enhanced version that processes points per edge to maintain graph consistency,
-#' with improved weight profile handling and edge type validation.
+#' Projects points onto the nearest edges in the graph and splits those edges at
+#' the projection points. This maintains the network topology by creating new
+#' vertices where points project onto existing edges.
 #'
 #' @inheritParams dodgr::add_nodes_to_graph
-#' @param wt_profile Weight profile name (e.g., "foot", "bicycle"). Required if 
-#'        using `new_edge_type`.
-#' @param wt_profile_file Optional path to custom weight profile CSV file. Uses
-#'        `dodgr:::get_profile()` for loading instead of base `read.csv`.
-#' @param new_edge_type Type for new connection edges (e.g., "footway"). Applies 
-#'        *only* to new edges connecting points to the graph, not split edges.
-#'        Must exist in specified weight profile.
-#' @param intersections_only Logical indicating whether to skip component ID
-#'        assignment for faster intermediate processing.
+#' @param graph A dodgr graph to modify
+#' @param xy Matrix or data.frame of x-y coordinates of points to add
 #'
 #' @return Modified graph with:
-#' - Original edges split at projection points
-#' - New edges connecting input points to graph
-#' - Updated component IDs (unless `intersections_only = TRUE`)
-#' - Consistent vertex IDs based on coordinate hashing
+#'   - New vertices at projection points
+#'   - Original edges split at projection points
+#'   - New edges connecting input points to projection points
 #'
-#' @details Key features:
-#' - Processes all points per edge together for topological consistency
-#' - Maintains original edge properties on split segments
-#' - Validates `new_edge_type` against weight profile contents
-#' - Uses geodist for accurate distance calculations
-#' - Generates deterministic vertex IDs based on edge positions
+#' @details
+#' This function:
+#' 1. Projects each point onto its nearest edge
+#' 2. Creates new vertices at projection points
+#' 3. Splits existing edges at these points
+#' 4. Maintains all original edge attributes
 #'
 #' @examples
-#' # Basic usage with default weight profile
-#' hw <- dodgr::weight_streetnet(dodgr::dodgr_streetnet("hampi"))
-#' xy <- data.frame(x = 76.4, y = 15.3)
-#' net <- add_nodes_to_graph5(hw, xy)
+#' # Create sample network
+#' net <- weight_streetnet(dodgr_streetnet("hampi india"))
 #'
-#' # With custom edge type validation
-#' net <- add_nodes_to_graph5(hw, xy, 
-#'                           wt_profile = "foot",
-#'                           new_edge_type = "path")
+#' # Add points by splitting edges
+#' pts <- data.frame(x = c(76.4, 76.5), y = c(15.3, 15.4))
+#' net_split <- add_verts_to_graph(net, pts)
 #'
-#' # Using custom weight profile file
-#' net <- add_nodes_to_graph5(hw, xy,
-#'                           wt_profile_file = "custom_weights.csv",
-#'                           new_edge_type = "custom_type")
-#'
-#' @seealso [dodgr::add_nodes_to_graph()] for base implementation
+#' @seealso
+#' [add_edges_to_graph()] for creating direct edges to vertices
 #' @export
 add_verts_to_graph <- function(graph,
                                 xy,
@@ -166,5 +152,3 @@ add_verts_to_graph <- function(graph,
 genhash <- function (len = 10) {
   paste0(sample(c(0:9, letters, LETTERS), size = len), collapse = "")
 }
-
-

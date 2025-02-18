@@ -71,9 +71,11 @@ add_nodes_to_graph3 <- function(graph,
                                 dist_tol = 1e-6) {
   
   # Validate tolerance
-  if (dist_tol <= 0) {
-    stop("Tolerance must be positive")
+  if (dist_tol < 0) {
+    stop("Tolerance must be non-negative")
   }
+  
+  stopifnot(nrow(xy)>0)
   
   # Standardize column names at the start
   gr_cols <- dodgr_graph_cols(graph)
@@ -87,10 +89,10 @@ add_nodes_to_graph3 <- function(graph,
   # Process xy data
   if ("id" %in% names(xy)) {
     xy_id <- xy$id
+    xy$id <- NULL
   } else {
     xy_id <- NULL
   }
-  xy$id <- NULL
   xy <- dodgr:::pre_process_xy(xy)
   
   # Add id column if not present
@@ -130,6 +132,7 @@ add_nodes_to_graph3 <- function(graph,
     
     # Get the edge to split
     edge <- graph_std[edge_idx,]
+    edge_f <- graph[edge_idx,]
     point_x <- xy$x[i]
     point_y <- xy$y[i]
     point_id <- xyf$id[i]
@@ -194,17 +197,14 @@ add_nodes_to_graph3 <- function(graph,
         edge_split$time <- edge_split$d * (edge$time / edge$d)
         edge_split$time_weighted <- edge_split$d * (edge$time_weighted / edge$d)
         
-        # Preserve other properties from original edge
-        edge_split$highway <- edge$highway
-        edge_split$maxspeed <- edge$maxspeed
-        edge_split$lanes <- edge$lanes
-        
+
         edge_split$edge_id <- paste0(edge_split$edge_id, "_", LETTERS[1:2])
       } else {
         # Use new edge type weights
-        edge_split$highway <- new_edge_type
+        #edge_split$highway <- new_edge_type
         
         wt_profile_df <- if (!is.null(wt_profile_file)) {
+          stop("fix loading profile")
           read.csv(wt_profile_file)
         } else {
           weight_profiles[[wt_profile]]
@@ -261,7 +261,7 @@ add_nodes_to_graph3 <- function(graph,
     
     # Update distances and weights for new edges
     edge_new$d <- d_i
-    
+
     if (is.null(new_edge_type)) {
       # Use proportional weights from original edge
       edge_new$d_weighted <- d_i * d_wt
@@ -269,16 +269,16 @@ add_nodes_to_graph3 <- function(graph,
       edge_new$time_weighted <- d_i * (edge$time_weighted / edge$d)
       
       # Preserve other properties from original edge
-      edge_new$highway <- edge$highway
-      edge_new$maxspeed <- edge$maxspeed
-      edge_new$lanes <- edge$lanes
+      #edge_new$highway <- edge$highway
+      #edge_new$maxspeed <- edge$maxspeed
+      #edge_new$lanes <- edge$lanes
       
       edge_new$edge_id <- vapply(seq_len(nrow(edge_new)),
                               function(i) genhash(10),
                               character(1L))
     } else {
       # Use new edge type weights
-      edge_new$highway <- new_edge_type
+      #edge_new$highway <- new_edge_type
       wt_multiplier <- wt_profile_df$value[wt_profile_df$highway == new_edge_type]
       if (length(wt_multiplier) == 0) {
         cli::cli_alert_warning("Edge type {new_edge_type} not found in weight profile, using 1")

@@ -29,11 +29,13 @@ plot_graph <- function(graph, path=NULL, max_n_points=100) {
 std_graph <- function(graph) {
   graph%>%
     ungroup%>%
-    select(all_of(c("geom_num", "edge_id", "from_id", "from_lon", "from_lat", "to_id", 
-                    "to_lon", "to_lat", "d", "d_weighted", "highway", "component", 
+    consolidate_vertex_ids()%>%
+    select(any_of(c("edge_id", "from_id", "from_lon", "from_lat", "to_id", 
+                    "to_lon", "to_lat", "d", "d_weighted", "highway",
                     "time", "time_weighted")))%>%
     group_by(from_id, to_id)%>%
     arrange(d_weighted)%>%slice(1)%>%
     ungroup%>%
-    mutate(edge_id=as.character(1:n()))
+    mutate(edge_id=as.character(1:n()))%>%
+    dodgr::dodgr_components()
 }

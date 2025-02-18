@@ -10,11 +10,14 @@
 #' @param xy Matrix or data.frame of x-y coordinates of points to add. If points
 #'        have an 'id' column, these IDs will be preserved, otherwise new IDs
 #'        will be generated.
+#' @param bidirectional Logical; if TRUE, creates bidirectional edges for each
+#'        connection (default: FALSE)
 #'
 #' @return Modified graph with:
 #'   - New vertices at projection points
 #'   - Original edges split at projection points
 #'   - All edge attributes preserved and properly weighted
+#'   - Bidirectional edges if requested
 #'
 #' @details
 #' This function:
@@ -23,28 +26,25 @@
 #' 3. Splits existing edges at these points
 #' 4. Maintains all original edge attributes and weights
 #' 5. Preserves existing point IDs or generates new ones if not provided
+#' 6. Creates bidirectional edges if requested
 #'
 #' @examples
 #' # Create sample network
 #' net <- weight_streetnet(dodgr_streetnet("hampi india"))
 #'
-#' # Add points by splitting edges
+#' # Add points by splitting edges (unidirectional)
 #' pts <- data.frame(x = c(76.4, 76.5), y = c(15.3, 15.4))
 #' net_split <- add_verts_to_graph(net, pts)
 #'
-#' # Add points with custom IDs
-#' pts_with_ids <- data.frame(
-#'   x = c(76.4, 76.5),
-#'   y = c(15.3, 15.4),
-#'   id = c("A", "B")
-#' )
-#' net_split <- add_verts_to_graph(net, pts_with_ids)
+#' # Add points with bidirectional edges
+#' net_split_bidir <- add_verts_to_graph(net, pts, bidirectional = TRUE)
 #'
 #' @seealso
 #' [add_edges_to_graph()] for creating direct edges to vertices
 #' @export
 add_verts_to_graph <- function(graph,
-                                xy) {
+                                xy,
+                                bidirectional = FALSE) {
   
   stopifnot(nrow(xy)>0)
   
@@ -111,24 +111,41 @@ add_verts_to_graph <- function(graph,
     if (edge$d==0) next
     closest_edge <- closest_edges|>dplyr::filter(index==edge_idx)
     projection_points <- closest_edge|>distinct(x,y,d_vert, .keep_all = TRUE)
+    
+    # Split edges at projection points
     edge_dif <- edge
     edge_new <- edge
     for (i in seq_len(nrow(projection_points))) {
+      point_id <- xy$id[projection_points$xy_index[i]]
+      point_x <- projection_points$x[i]
+      point_y <- projection_points$y[i]
+      d_i <- projection_points$d[i]
+      
+      # Split the edge at projection point
       edge_new <- dodgr::dodgr_insert_vertex(
         graph = edge_new,
         v1 = edge_dif$from,
         v2 = edge_dif$to,
-        x=projection_points$x[i],
-        y=projection_points$y[i]
+        x = point_x,
+        y = point_y
       )
-      edge_dif <- edge_new%>%anti_join(edge,by = join_by(edge_id, from, to, d, d_weighted, time, time_weighted, xfr,yfr, xto, yto, component))%>%slice(2)
+      
+      # Update edge_dif for next iteration - get the remaining part of the split edge
+      edge_dif <- edge_new|>
+        anti_join(edge, by = join_by(from, to))|>
+        slice(2)
     }
     edge_new$graph_orig_idx <- edge_idx
-    new_edges <- rbind(new_edges,edge_new)
+    new_edges <- rbind(new_edges, edge_new)
   }
+  if (bidirectional) {
+    new_edges_rev <- new_edges%>%dplyr::rename(from=to, to=from, xfr=xto, xto=xfr, yfr=yto, yto=yfr)%>%dplyr::mutate(edge_id=paste0(edge_id, "_rev"))
+    new_edges <- rbind(new_edges,new_edges_rev)
+  }
+  # Update graph with new edges
   graph_std$graph_orig_idx <- 1:nrow(graph_std)
   graph_std_new <- rbind(graph_std[-closest_edges$index,],
-                         new_edges)
+                       new_edges)
   result_orig <- graph[-unique(closest_edges$index),]
   result_new <- graph[new_edges$graph_orig_idx,]
   # Update only the standardized columns
@@ -143,6 +160,7 @@ add_verts_to_graph <- function(graph,
     result_orig$edge_id <- as.character(result_orig$edge_id)
   }
   result_final <- dplyr::bind_rows(result_orig, result_new)
+  
   # Return the final result
   return(result_final)
 }

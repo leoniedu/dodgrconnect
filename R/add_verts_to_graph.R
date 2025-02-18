@@ -47,9 +47,6 @@
 #' @export
 add_verts_to_graph <- function(graph,
                                 xy,
-                                wt_profile = NULL,
-                                wt_profile_file = NULL,
-                                new_edge_type = NULL,
                                 max_length = Inf,
                                 dist_tol = 1e-6) {
   
@@ -65,7 +62,7 @@ add_verts_to_graph <- function(graph,
   gr_cols <- unlist(gr_cols[which(!is.na(gr_cols))])
   graph_std <- graph[, gr_cols]  # standardise column names
   names(graph_std) <- names(gr_cols)
-  #graph_std$edge_id <- as.character(graph_std$edge_id)
+  graph_std$edge_id <- as.character(graph_std$edge_id)
   # Save original column mapping
   col_mapping <- setNames(gr_cols, names(gr_cols))
   
@@ -140,12 +137,12 @@ add_verts_to_graph <- function(graph,
         x=projection_points$x[i],
         y=projection_points$y[i]
       )
-      browser()
-      edge_dif <- edge_new%>%anti_join(edge)%>%slice(2)
+      edge_dif <- edge_new%>%anti_join(edge,by = join_by(edge_id, from, to, d, d_weighted, time, time_weighted, xfr,yfr, xto, yto, component))%>%slice(2)
     }
+    edge_new$graph_orig_idx <- edge_idx
     new_edges <- rbind(new_edges,edge_new)
-    new_edges$graph_orig_idx <- edge_idx
   }
+  graph_std$graph_orig_idx <- 1:nrow(graph_std)
   graph_std_new <- rbind(graph_std[-closest_edges$index,],
                          new_edges)
   result_orig <- graph[-unique(closest_edges$index),]
@@ -169,3 +166,5 @@ add_verts_to_graph <- function(graph,
 genhash <- function (len = 10) {
   paste0(sample(c(0:9, letters, LETTERS), size = len), collapse = "")
 }
+
+

@@ -7,13 +7,12 @@
 add_nodes_to_graph2(
   graph,
   xy,
-  dist_tol = 1e-06,
   intersections_only = FALSE,
   new_edge_type = NULL,
   wt_profile = NULL,
   wt_profile_file = NULL,
   surface = NULL,
-  max_length = NULL,
+  max_length = Inf,
   tolerance = 0.001
 )
 }
@@ -23,9 +22,6 @@ add_nodes_to_graph2(
 \item{xy}{A \code{data.frame} or \code{matrix} of points to add. If a matrix, must have 2 columns
 for lon and lat coordinates. If a data.frame, must include 'lon' and 'lat' columns.
 Optionally can include 'id' column to specify vertex IDs.}
-
-\item{dist_tol}{Minimum distance used to identify points lying directly on edges,
-expressed in units of the distance column of \code{graph}}
 
 \item{intersections_only}{If TRUE, only add nodes at intersections between
 edges, otherwise add all nodes}

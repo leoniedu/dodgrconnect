@@ -10,7 +10,6 @@ connect_components3(
   connection_type,
   wt_profile,
   wt_profile_file = NULL,
-  surface = "paved",
   components_to_join
 )
 }
@@ -24,8 +23,6 @@ connect_components3(
 \item{wt_profile}{Weight profile to use for calculating edge weights and times}
 
 \item{wt_profile_file}{Optional path to a custom weight profile file}
-
-\item{surface}{Surface type for the new edges (e.g., "paved")}
 
 \item{components_to_join}{Integer vector specifying the component IDs to connect in sequence}
 }
@@ -66,7 +63,6 @@ net_connected <- connect_components3(
   distance_threshold = 50,  # 50 meters
   connection_type = "footway",
   wt_profile = "foot",
-  surface = "paved",
   components_to_join = c(1, 2, 3)
 )
 }

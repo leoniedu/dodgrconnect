@@ -1,0 +1,307 @@
+---
+title: "simple_map"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{simple_map}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+```{r setup}
+# library(dodgrconnect)
+# library(dodgr)
+devtools::load_all(here::here("../dodgr/"))
+devtools::load_all(here::here("../dodgrconnect/"))
+library(sf)
+library(ggplot2)
+library(dplyr)
+```
+
+
+
+```{r}
+net <- weight_streetnet (hampi, wt_profile = "foot")
+plot_graph(net)
+```
+
+
+```{r}
+net_connected2 <- connect_components3(graph = net, components_to_join = c(1,2), surface = "pavement", wt_profile = "foot", connection_type = "primary", distance_threshold = 300)
+
+net_connected2s <- connect_components_simple(graph = net, components_to_join = c(1,2), wt_profile = "foot", connection_type = "primary", distance_threshold = 300)
+
+plot_graph(net_connected2)
+dim(net_connected2)
+plot_graph(net_connected2s)
+dim(net_connected2s)
+```
+
+
+## break long edges 
+```{r}
+netb <- break_long_edges(net, 500)
+net_connected2b <- connect_components3(graph = netb, components_to_join = c(1,3), surface = "pavement", wt_profile = "foot", connection_type = "primary", distance_threshold = 500)
+plot_graph(net_connected2b)
+dim(net_connected2b)
+```
+
+```{r}
+net_connected2bs <- connect_components_simple(graph = netb, components_to_join = c(1,3),  wt_profile = "foot", connection_type = "primary", distance_threshold = 500)
+plot_graph(net_connected2b)
+dim(net_connected2bs)
+
+```
+
+```{r}
+net_connected3a <- connect_components3(graph = net, components_to_join = 1:3, surface = "pavement", wt_profile = "foot", connection_type = "primary", distance_threshold = 300)
+net_connected3b <- connect_components3(graph = net, components_to_join = 1:3, surface = "pavement", wt_profile = "motorcar", connection_type = "artificial", wt_profile_file = "~/github/tractdistancesbr/profile.json", distance_threshold = 300)
+plot_graph(net_connected3b)+
+      geom_segment(aes(x = from_lon, y=from_lat, xend = to_lon, yend = to_lat), color="purple", alpha=1, data=net_connected3b%>%filter(highway=="artificial"))
+
+dim(net_connected3b)
+plot_graph(net_connected3b)
+```
+
+
+
+```{r}
+a <- list(graph = net, wt_profile = "motorcar", connection_type = "artificial", wt_profile_file = "~/github/tractdistancesbr/profile.json", distance_threshold = 300, components_to_join=1:2)
+net_connected3bs <- do.call(connect_components_simple, a)
+a$graph <- net_connected3bs
+a$components_to_join <- c(1,3)
+net_connected3bs <- do.call(connect_components_simple, a)
+table(net_connected3bs$component)
+dim(net_connected3bs)
+plot_graph(net_connected3bs)
+```
+
+
+
+
+```{r}
+from <- net%>%filter(component==1)%>%slice_sample(n=1)%>%pull(from_id)
+to <- net%>%filter(component==3)%>%slice_sample(n=1)%>%pull(from_id)
+dp <- dodgr_paths (net_connected3bs, from = from, to = to, pairwise = TRUE, vertices=FALSE)
+table(net_connected3bs[unlist(dp),"highway"])
+plot_graph(net_connected3bs, path=dp)
+
+```
+
+
+## Connect points
+
+```{r}
+verts <- dodgr_vertices (net)
+
+set.seed (2)
+npts <- 10
+xy <- data.frame (
+    x = min (verts$x) + runif (npts) * diff (range (verts$x)),
+    y = min (verts$y) + runif (npts) * diff (range (verts$y))
+)%>%arrange(y)
+
+net_connected3_p <- add_nodes_to_graph (net_connected3bs, xy)
+
+
+```
+
+
+```{r}
+net_connected3_p2 <- add_nodes_to_graph2 (net_connected3bs, xy,surface = "pavement", wt_profile = "motorcar", new_edge_type = "artificial", wt_profile_file = "~/github/tractdistancesbr/profile.json")
+
+dpxy <- dodgr_paths (net_connected3_p2, from = head(xy,1), to = tail(xy,1), pairwise = TRUE, vertices=FALSE)
+plot_graph(net_connected3_p2, path = dpxy) +
+  geom_point(aes(x=x,y=y), data=xy)
+
+
+
+```
+
+
+```{r}
+plot_graph(net_connected3_p2) +
+  geom_point(aes(x=x,y=y), data=xy)+
+  geom_segment(aes(x = from_lon, y=from_lat, xend = to_lon, yend = to_lat), color="purple", alpha=1, data=net_connected3_p2%>%filter(highway=="artificial"))
+```
+
+```{r}
+# Create a curved road and a crossing road
+# curved_road <- st_linestring(matrix(c(
+#   0, 0,
+#   2, 1,
+#   4, 1,
+#   6, 0,
+#   8, 0
+# ), ncol=2, byrow=TRUE))
+
+# crossing_road <- st_linestring(matrix(c(
+#   4, -1,
+#   4, 2
+# ), ncol=2, byrow=TRUE))
+
+disconnected_road1 <- st_linestring(matrix(c(0,-1, 8,-1), ncol=2, byrow=TRUE))
+disconnected_road2 <- st_linestring(matrix(c(0,-2, 8,-2), ncol=2, byrow=TRUE))
+
+roads_sf <- st_sf(
+    geometry = st_sfc(disconnected_road1,
+                      disconnected_road2, crs=4326),
+    highway = c("residential", "residential"),
+    id = c("1",
+           "2")
+  )
+
+ggplot(data=roads_sf)+geom_sf()
+
+
+
+# Create initial dodgr network
+net_initial <- weight_streetnet(roads_sf, id_col = "id")%>%
+  mutate(edge_id=as.character(edge_id))
+v_initial <- dodgr_vertices(net_initial)
+message("\nInitial network structure:")
+message("- Number of vertices: ", nrow(v_initial))
+message("- Number of edges: ", nrow(net_initial))
+table(net_initial$component)
+
+# connect networks
+v2 <- v_initial%>%filter(component==2)%>%
+  st_as_sf(coords=c("x", "y"), remove=FALSE)%>%
+  slice(1)
+net_initial_1 <- net_initial%>%filter(component==1)
+net_initial_2 <- net_initial%>%filter(component==2)
+net_12 <- add_nodes_to_graph2(net_initial_1, v2)%>%
+  ## why duplicate edges?
+  ## remove them
+  std_graph()
+
+library(ggrepel)
+net_12%>%anti_join(net_initial)
+net_12 <- net_12%>%
+  bind_rows(net_initial_2)%>%
+  mutate(component=if_else(component==2,1,component))%>%
+  std_graph()
+
+
+p_net <- ggplot(net_12) +
+  geom_segment(aes(x = from_lon, y=from_lat, xend = to_lon, yend = to_lat), color="pink", alpha=1/2)+
+    geom_sf(data=roads_sf, color="gray")+
+    geom_label_repel(aes(x = from_lon, y=from_lat, label=from_id),data=net_12%>%distinct(from_lon, from_lat, from_id))+
+  geom_label(aes(x = (from_lon+to_lon)/2, y =  (from_lat+to_lat)/2, label=edge_id), color="blue")
+
+## map with new edges
+p_net
+
+## try a path
+#path01 <- dodgr_paths(net_12, from = "0", to="1", vertices = FALSE)
+#path23 <- dodgr_paths(net_12, from = "2", to="3", vertices = FALSE)
+#path02 <- dodgr_paths(net_12, from = "0", to="2", vertices = FALSE)
+path03 <- dodgr_paths(net_12, from = "0", to="3", vertices = FALSE)
+
+## show path betwen components
+p_net+
+  geom_segment(aes(x = from_lon, y=from_lat, xend = to_lon, yend = to_lat), data=net_12[unlist(path03),], color="red")
+
+## create points
+points_sf <- st_sf(
+  geometry = st_sfc(
+    st_point(c(0, -3)),    
+    st_point(c(2, 0)),    
+    st_point(c(4, 0.5)),  
+    st_point(c(6, 1)),    
+    crs = 4326
+  ),
+  id = c(3, 4, 5,6)
+)
+points_sf$x <- st_coordinates(points_sf)[,1]
+points_sf$y <- st_coordinates(points_sf)[,2]
+
+
+
+
+
+
+## add points to network
+p_to_add <- points_sf%>%slice(1)
+plot_graph(net_12)
+net_12p <- add_nodes_to_graph2(graph = net_12, xy=p_to_add%>%st_coordinates())
+net_12p%>%anti_join(net_12, by=c("edge_id"))
+
+tmp <- connect_components3(graph = net_initial, components_to_join = 1:2, surface = "pavement", wt_profile_file = "~/github/tractdistancesbr/profile.json", wt_profile = "motorcar", connection_type = "artificial", distance_threshold = 300000)
+graph <- tmp%>%break_long_edges(max_d = 300000)
+path <- dodgr_paths(graph, from = "0", to="6", vertices = FALSE)
+plot_graph(graph) 
+
+pathp <- dodgr_paths(net_12p, from = p_to_add%>%st_coordinates(), to="1", vertices = FALSE)
+
+ggplot(net_12p) +
+  geom_segment(aes(x = from_lon, y=from_lat, xend = to_lon, yend = to_lat), color="pink", alpha=1/2)+
+    geom_sf(data=roads_sf, color="gray")+
+  geom_sf(data=p_to_add, color="blue")+
+  geom_label_repel(aes(x = from_lon, y=from_lat, label=from_id),data=net_12%>%distinct(from_lon, from_lat, from_id))+
+  geom_label(aes(x = (from_lon+to_lon)/2, y =  (from_lat+to_lat)/2, label=edge_id), color="blue")+
+  #geom_segment(aes(x = from_lon, y=from_lat, xend = to_lon, yend = to_lat), color="red", alpha=1/2, data=net_12p[unlist(path03p),])+
+  geom_segment(aes(x = from_lon, y=from_lat, xend = to_lon, yend = to_lat), color="orange", data=net_12p[unlist(pathp),])
+  # Create new vertices
+
+  net_b <- net_initial%>%
+    break_long_edges(max_d = 400000)
+
+  # Calculate path between points
+  initial_paths <- try(dodgr_paths(net_b, from = points_sf%>%st_coordinates(), vertices = FALSE))
+  message("\nInitial path attempt result:")
+  print(initial_paths)
+  net_b[unlist(initial_paths),]
+  ggplot(net_b)+
+    geom_segment(aes(x = from_lon, y=from_lat, xend = to_lon, yend = to_lat))+
+    geom_point(aes(x = from_lon, y=from_lat), color="blue")+
+    geom_point(aes(x = x, y=y), color="red", data=points_sf)+
+    geom_segment(aes(x = from_lon, y=from_lat, xend = to_lon, yend = to_lat), data=net_b[unlist(initial_paths),], color="pink")
+
+  # 5. Connect points to network
+  net_connected1 <- add_nodes_to_graph2(net_b, st_coordinates(points_sf)%>%head(2))%>%
+    ungroup()%>%
+    mutate(edge_id=1:n())
+  net_connected2 <- net_connected1%>%
+    add_nodes_to_graph2(st_coordinates(points_sf)%>%tail(2))%>%
+    ungroup()%>%
+    mutate(edge_id=1:n())
+  net_connected3 <- net_connected2%>%
+    filter(component==1)%>%
+    add_nodes_to_graph2(dodgr_vertices(net_b%>%filter(component==2)%>%head(2))%>%select(x,y))%>%
+    ungroup()%>%
+    bind_rows(net_connected2%>%
+                mutate(edge_id=as.character(edge_id))%>%
+                filter(component==2))%>%
+    mutate(edge_id=1:n(), component=1)
+  net_connected3 <- connect_components_simple(net_connected2, connection_type = "artificial", wt_profile = "motorcar", wt_profile_file = "~/github/tractdistancesbr/profile.json", components_to_join = 1:2, distance_threshold = Inf)
+  ggplot(net_connected3)+
+    geom_segment(aes(x = from_lon, y=from_lat, xend = to_lon, yend = to_lat))+
+    geom_point(aes(x = from_lon, y=from_lat), color="blue")+
+    geom_point(aes(x = x, y=y), color="red", data=points_sf)
+
+
+  # 6. Calculate path
+  paths_v <- dodgr_paths(net_connected3, from = st_coordinates(points_sf%>%filter(id==6)), to = st_coordinates(points_sf%>%filter(id==3)), vertices = TRUE)
+  paths_e <- dodgr_paths(net_connected3, from = st_coordinates(points_sf%>%filter(id==6)), to = st_coordinates(points_sf%>%filter(id==3)), vertices = FALSE)
+  message("Paths results:")
+  print(paths_v)
+  print(paths_e)
+  ggplot(net_connected3)+
+    geom_segment(aes(x = from_lon, y=from_lat, xend = to_lon, yend = to_lat, color=factor(component)))+
+    geom_point(aes(x = from_lon, y=from_lat))+
+    #geom_point(aes(x = x, y=y), color="red", data=points_sf)+
+    geom_label(aes(x = x, y=y, label=id), color="black", data=points_sf)+
+    geom_segment(aes(x = from_lon, y=from_lat, xend = to_lon, yend = to_lat), data=net_connected3[unlist(paths_e),], color="orange", linewidth=3)
+
+
+
+
+```
+

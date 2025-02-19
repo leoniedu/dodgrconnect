@@ -341,6 +341,3 @@ add_nodes_to_graph3 <- function(graph,
   return(result_final)
 }
 
-genhash <- function (len = 10) {
-  paste0(sample(c(0:9, letters, LETTERS), size = len), collapse = "")
-}

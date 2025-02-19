@@ -44,6 +44,7 @@
 #' @export
 add_verts_to_graph <- function(graph,
                                 xy,
+                               max_distance=Inf,
                                 bidirectional = TRUE) {
   
   stopifnot(nrow(xy)>0)
@@ -75,9 +76,6 @@ add_verts_to_graph <- function(graph,
   xy$id <- xy_id
   # Match points to edges
   closest_edges <- match_pts_to_graph(graph_std, xy[, c("x", "y")], distances = TRUE)
-  # closest_edges <- closest_edges|>
-  #   dplyr::group_by(index)|>
-  #   mutate(edge_index=order(-abs(d_signed)), index=if_else(edge_index>1, NA, index))
   closest_edges$xy_index <- seq_len(nrow(closest_edges))
   closest_edges$xfr <- graph_std$xfr[closest_edges$index]
   closest_edges$yfr <- graph_std$yfr[closest_edges$index]
@@ -87,17 +85,18 @@ add_verts_to_graph <- function(graph,
   closest_edges$d_vert <- with(closest_edges,geodist::geodist(x=cbind(x,y), y=cbind(xfr,yfr), paired = TRUE, measure = "geodesic"))
   closest_edges$edge_id <- graph_std$edge_id[closest_edges$index]
   closest_edges <- closest_edges|>dplyr::arrange(index,d_vert)
-  
+  closest_edges <- closest_edges|>dplyr::mutate(connect=abs(d_signed)<=max_distance)
   # Check for unconnected points
-  not_connected <- sum(is.na(closest_edges$index))
+  not_connected <- sum(!(closest_edges$connect))
   if (not_connected > 0) {
     cli::cli_alert_warning("{not_connected} points not connected ")
   }
-  
-  if (nrow(closest_edges) == 0) {
+  connected <- sum(closest_edges$connect)
+  if (connected == 0) {
+    cli::cli_alert_warning("No points within max_distance to connect")
     return(graph)
   }
-  
+  closest_edges <- closest_edges%>%dplyr::filter(connect)
   # Update xy to only include connected points
   xy <- xy[closest_edges$xy_index,]
   
@@ -165,6 +164,3 @@ add_verts_to_graph <- function(graph,
   return(result_final)
 }
 
-genhash <- function (len = 10) {
-  paste0(sample(c(0:9, letters, LETTERS), size = len), collapse = "")
-}

@@ -1,0 +1,360 @@
+---
+title: "Creating and Analyzing a Simple Map with dodgr"
+output: html_document
+---
+
+# Vignette: Creating and Analyzing a Simple Map with `dodgr`
+
+This vignette demonstrates how to create a simple map using the `dodgr` package, add points to it, and analyze the resulting network. We will explore how to create a line, add points, and calculate paths using the `dodgr` package.
+
+## 1. Setup
+
+First, we load the necessary libraries and the `dodgr` package:
+
+```{r}
+library(sf)
+devtools::load_all(here::here("../dodgr/"))
+devtools::load_all(here::here("."))
+library(ggplot2)
+library(ggrepel)
+library(dplyr)
+dodgr_cache_off()
+```
+
+## 2. Creating a Simple Road
+
+We begin by creating a simple straight road represented as a line string:
+
+```{r}
+road <- st_linestring(matrix(c(0,0, 10,0), ncol=2, byrow=TRUE))
+roads <- st_sf(
+  geometry = st_sfc(road, crs = 4326),
+  highway = "residential",
+  id = 1,
+  artificial = FALSE
+)
+
+```
+
+### Comment:
+This creates a single road segment with a specified coordinate reference system (CRS).
+
+## 3. Adding Points
+
+Next, we add two points near the road but not directly on it:
+
+```{r}
+point1 <- st_point(c(2, 1))
+point2 <- st_point(c(8, -1))
+points <- tibble(x=c(2,8), y=c(1,-1), id=c(2,3)) %>%
+  sf::st_as_sf(coords=c("x", "y"), remove=FALSE)
+```
+
+### Comment:
+The points are converted to an `sf` object, allowing spatial operations.
+
+## 4. Creating a Network
+
+We create an initial network from the road:
+
+```{r}
+net_initial <- weight_streetnet(roads, id_col = "id")
+v_initial <- dodgr_vertices(net_initial)
+```
+
+### Comment:
+This function weights the street network, which is essential for routing and pathfinding.
+
+
+## 6. Connect points to network
+
+```{r}
+test_comp <- function(x) dodgr::dodgr_components(x%>%rename(cmp_old=component))%>%count(cmp_old, component)
+
+net_connected <- add_verts_to_graph(net_initial, st_coordinates(points))
+
+ggplot(net_connected)+
+  geom_segment(aes(x = from_lon, y=from_lat, xend = to_lon, yend = to_lat))+
+  geom_point(aes(x = from_lon, y=from_lat), color="blue")+
+  geom_point(aes(x = x, y=y), color="red", data=points)
+```
+
+
+
+```{r}
+paths_e <- dodgr_paths(net_connected, from = st_coordinates(points)[1,], to = st_coordinates(points)[2,], vertices = FALSE)
+message("Paths results:")
+print(paths_e)
+ggplot(net_connected)+
+  geom_segment(aes(x = from_lon, y=from_lat, xend = to_lon, yend = to_lat))+
+  geom_point(aes(x = from_lon, y=from_lat), color="blue")+
+  geom_point(aes(x = x, y=y), color="red", data=points)+
+  geom_segment(aes(x = from_lon, y=from_lat, xend = to_lon, yend = to_lat), data=net_connected[unlist(paths_e),], color="pink")
+
+```
+
+
+
+```{r}
+curved_road <- st_linestring(matrix(c(
+  0, 0,
+  2, 1,
+  4, 1,
+  6, 0,
+  8, 0
+), ncol=2, byrow=TRUE))
+
+crossing_road <- st_linestring(matrix(c(
+  4, -1,
+  4, 2
+), ncol=2, byrow=TRUE))
+
+disconnected_road <- st_linestring(matrix(c(0,-2, 8,-2), ncol=2, byrow=TRUE))
+
+roads_sf <- st_sf(
+  geometry = st_sfc(curved_road,
+                    crossing_road,
+                    disconnected_road, crs=4326),
+  highway = c("residential", "residential", "residential"),
+  id = c(1,
+         2,
+         3)
+)
+roads_sf <- roads_sf[c(1,3),]
+
+ggplot(data=roads_sf)+geom_sf()
+
+```
+
+
+# Create points that should connect to different parts
+
+```{r}
+
+points_sf <- st_sf(
+  geometry = st_sfc(
+    st_point(c(0, -3)),    # Should connect to disconnected road
+    st_point(c(2, 0)),    # Should connect to curved road
+    st_point(c(4, 0.5)),  # Should connect to both roads
+    st_point(c(6, 1)),    # Should connect to curved road
+    crs = 4326
+  ),
+  id = c(3, 4, 5,6)
+)
+points_sf$x <- st_coordinates(points_sf)[,1]
+points_sf$y <- st_coordinates(points_sf)[,2]
+ggplot(data=roads_sf)+geom_sf() + geom_sf(data=points_sf)
+```
+
+
+# Create initial dodgr network
+```{r}
+
+net_initial <- weight_streetnet(roads_sf, id_col = "id")
+v_initial <- dodgr_vertices(net_initial)
+message("\nInitial network structure:")
+message("- Number of vertices: ", nrow(v_initial))
+message("- Number of edges: ", nrow(net_initial))
+
+```
+
+
+```{r}
+v2 <- v_initial%>%filter(component==2)%>%
+  st_as_sf(coords=c("x", "y"), remove=FALSE)%>%
+  slice(1)
+net_b_1 <- net_initial%>%filter(component==1)
+net_b_2 <- net_initial%>%filter(component==2)
+net_b_12 <- add_verts_to_graph(net_b_1, v2)%>%
+  add_edges_to_graph(v2, wt_profile="motorcar", highway = "residential")%>%
+  bind_rows(net_b_2%>%mutate(edge_id=as.character(edge_id)))%>%
+  std_graph()
+
+test_comp(net_b_12)
+
+```
+
+
+```{r}
+ggplot(net_initial) +
+  geom_sf(data=roads_sf, color="gray")+
+  geom_segment(aes(x = from_lon, y=from_lat, xend = to_lon, yend = to_lat), color="pink", alpha=1/2)+
+  geom_label_repel(aes(x = from_lon, y=from_lat, label=from_id),data=net_b_12%>%distinct(from_lon, from_lat, from_id))+
+  geom_point(aes(x = x, y=y), color="red", data=points_sf)
+
+```
+
+
+```{r}
+net_b <- net_b_12#%>%break_long_edges(max_d = 400000)
+```
+
+
+```{r}
+initial_paths <- try(dodgr_paths(net_b, from = points_sf%>%st_coordinates(), vertices = FALSE))
+message("\nInitial path attempt result:")
+ggplot(net_b)+
+  geom_segment(aes(x = from_lon, y=from_lat, xend = to_lon, yend = to_lat))+
+  geom_point(aes(x = from_lon, y=from_lat), color="blue")+
+  geom_point(aes(x = x, y=y), color="red", data=points_sf)+
+  geom_segment(aes(x = from_lon, y=from_lat, xend = to_lon, yend = to_lat), data=net_b[unlist(initial_paths),], color="pink")
+
+```
+
+
+
+
+```{r}
+p2 <- st_coordinates(points_sf)
+net_connected2 <- add_verts_to_graph(net_b,p2, bidirectional = FALSE)%>%
+  add_edges_to_graph(p2, wt_profile="motorcar", highway = "residential")%>%
+  std_graph()
+
+dodgr::dodgr_components(net_connected2%>%select(-component))%>%count(component)
+```
+
+
+# 6. Calculate path
+```{r}
+paths_e <- dodgr_paths(net_connected2, from = st_coordinates(points_sf%>%filter(id==6)), to = st_coordinates(points_sf%>%filter(id==3)), vertices = FALSE)
+message("Paths results:")
+print(paths_e)
+v_connected2 <- dodgr_vertices(net_connected2)
+ggplot(net_connected2)+
+  geom_segment(aes(x = from_lon, y=from_lat, xend = to_lon, yend = to_lat, color=factor(component)))+
+  geom_point(aes(x = x, y=y), data=v_connected2)+
+  geom_label(aes(x = x, y=y, label=id), color="black", data=points_sf)+
+  geom_segment(aes(x = from_lon, y=from_lat, xend = to_lon, yend = to_lat), data=net_connected2[unlist(paths_e),], color="orange", linewidth=3, alpha=1/3) +
+  geom_sf(data=roads_sf, color="purple")
+```
+
+## create bidirectional edge splits
+
+
+```{r}
+net_connected2b <- add_verts_to_graph(net_b,p2, bidirectional = TRUE)%>%
+  add_edges_to_graph(p2, wt_profile="motorcar", highway = "residential")%>%
+  std_graph()
+
+dodgr::dodgr_components(net_connected2b%>%select(-component))%>%count(component)
+```
+
+
+# 6. Calculate path
+```{r}
+paths_eb <- dodgr_paths(net_connected2b, from = st_coordinates(points_sf%>%filter(id==6)), to = st_coordinates(points_sf%>%filter(id==3)), vertices = FALSE)
+message("Paths results:")
+print(paths_eb)
+v_connected2b <- dodgr_vertices(net_connected2b)
+ggplot(net_connected2b)+
+  geom_segment(aes(x = from_lon, y=from_lat, xend = to_lon, yend = to_lat, color=factor(component)))+
+  geom_point(aes(x = x, y=y), data=v_connected2b)+
+  geom_label(aes(x = x, y=y, label=id), color="black", data=points_sf)+
+  geom_segment(aes(x = from_lon, y=from_lat, xend = to_lon, yend = to_lat), data=net_connected2b[unlist(paths_eb),], color="orange", linewidth=3, alpha=1/3) +
+  geom_sf(data=roads_sf, color="purple")
+```
+
+
+## Use hampi data
+
+```{r}
+graph <- weight_streetnet (hampi, wt_profile = "foot")
+table(graph$component)
+dim (graph)
+verts <- dodgr_vertices (graph)
+```
+
+## connect components 1 and 2 
+
+```{r}
+v2 <- verts%>%filter(component==2)%>%
+  st_as_sf(coords=c("x", "y"), remove=FALSE)%>%
+  slice(1)
+net_b_1 <- graph%>%filter(component==1)
+net_b_2 <- graph%>%filter(component==2)
+net_b_o <- graph%>%filter(!component%in%c(1:2))
+net_b_12 <- add_verts_to_graph(net_b_1, v2)%>%
+  add_edges_to_graph(v2, wt_profile="motorcar", highway = "residential")%>%
+  bind_rows(net_b_2%>%mutate(edge_id=as.character(edge_id)))%>%
+  bind_rows(net_b_o%>%mutate(edge_id=as.character(edge_id)))%>%
+  std_graph()
+table(net_b_12$component)
+```
+
+
+```{r}
+set.seed (2)
+npts <- 100
+xy <- data.frame (
+    x = min (verts$x) + runif (npts) * diff (range (verts$x)),
+    y = min (verts$y) + runif (npts) * diff (range (verts$y))
+)
+```
+
+
+## using dodgr
+```{r}
+graph_dodgr <- add_nodes_to_graph (graph, xy)
+dim (graph_dodgr) # more edges than original
+```
+
+
+
+
+## find xy points connecting to the same edge
+
+
+```{r}
+pt_matches <- match_pts_to_graph(graph, xy, distances = TRUE)
+pt_max_edge <- pt_matches$index%>%table%>%sort%>%tail(1)
+pt_1 <- pt_matches%>%filter(index==names(pt_max_edge))%>%
+  mutate(component=graph$component[index])%>%
+  filter(component==1)%>%
+  arrange(x,y)
+stopifnot(nrow(pt_1)>1)
+
+
+```
+
+## using dodgr
+```{r}
+pt_path <- dodgr_paths(graph = graph, 
+            from = head(pt_1[,c("x", "y")],1),
+            to = tail(pt_1[,c("x", "y")],1), vertices = FALSE)
+print(pt_path)
+
+
+
+```
+
+
+## using dodgrconnect
+
+```{r}
+graph_connect <- add_verts_to_graph(graph, xy)%>%
+  add_edges_to_graph(xy, wt_profile="foot", highway = "residential")%>%
+  std_graph()
+pt_path <- dodgr_paths(graph = graph_connect, 
+            from = head(pt_1[,c("x", "y")],1),
+            to = tail(pt_1[,c("x", "y")],1), vertices = FALSE)
+print(pt_path)
+
+```
+
+
+```{r}
+ggplot(graph_connect)+
+  #geom_segment(aes(x = from_lon, y=from_lat, xend = to_lon, yend = to_lat, color=factor(component)))+
+  #geom_point(aes(x=x, y=y), data=pt_1[c(1,nrow(pt_1)),], color="blue", size=4)+
+  #geom_point(aes(x=x, y=y), data=xy)+
+  geom_segment(aes(x = from_lon, y=from_lat, xend = to_lon, yend = to_lat),
+data=graph_connect[unlist(pt_path),], color="orange", linewidth=3, alpha=1/3)#+geom_sf(data=hampi, color="purple")
+
+```
+
+---
+
+
+
+
+This vignette provides a step-by-step guide to creating and analyzing a simple map using `dodgr`. If you have any specific issues or need further clarification, feel free to ask!
